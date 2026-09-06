@@ -9,7 +9,7 @@ interface.
 - `Services/` contains Dataverse connection and metadata access code.
 - `Models/` contains data objects used by the TUI.
 - `dvtui.csproj` defines the .NET target and NuGet dependencies.
-- There is currently no test project or checked-in asset directory.
+- `tests/` contains the terminal test host and Python integration runner.
 
 Keep presentation, Dataverse communication, and data models separate. Add
 new functionality to the narrowest appropriate area.
@@ -35,8 +35,13 @@ The URL may also be supplied as the only argument:
 dotnet run -- "https://example.crm.dynamics.com"
 ```
 
-Run `dotnet build` after changes. Use `dotnet test` if a test project is
-added; the repository currently has no automated tests.
+Run `dotnet build` after changes. Run terminal integration tests with:
+
+```text
+python3 tests/test_entity_browser.py
+```
+
+See `tests/README.md` for requirements and coverage.
 
 ## Coding Style and Naming
 
@@ -51,9 +56,10 @@ method chain spans lines, put the dot at the start of the next line.
 
 ## Testing Guidelines
 
-No testing framework or coverage threshold is configured yet. New tests
-should be placed in a separate test project and named after the production
-type, for example `DataverseServiceTests`.
+Keep tests under `tests/`. Terminal integration tests use a separate host
+that references the application and supplies simulated metadata. No unit
+testing framework or coverage threshold is configured yet. Name new tests
+after the production type, for example `DataverseServiceTests`.
 
 ## Commits and Pull Requests
 
