@@ -14,10 +14,14 @@ public class DataverseService : IDisposable
 
    public DataverseService(string url)
    {
+      url = url.Replace("http://", "").TrimEnd('/');
+      if (url.StartsWith("https://") == false)
+         url = "https://" + url;
+
       var options = new ConnectionOptions
       {
          AuthenticationType = AuthenticationType.OAuth,
-         ServiceUri = new Uri(url.TrimEnd('/')),
+         ServiceUri = new Uri(url),
          RedirectUri = new Uri("http://localhost"),
          LoginPrompt = PromptBehavior.Auto,
          SkipDiscovery = true

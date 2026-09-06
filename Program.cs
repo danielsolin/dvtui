@@ -36,6 +36,9 @@ try
    AnsiConsole.Write(new Rule());
 
    RenderColumnPreview(columns);
+
+   AnsiConsole.WriteLine("Press any key to continue");
+   AnsiConsole.Console.Input.ReadKey(false);
 }
 catch (Exception ex)
 {
@@ -48,7 +51,7 @@ static void RenderColumnPreview(List<DataverseColumn> columns)
    table.AddColumn("Logical Name");
    table.AddColumn("Display Name");
 
-   foreach (var col in columns.Take(15))
+   foreach (var col in columns)
    {
       table.AddRow(col.Name, col.DisplayName);
    }
