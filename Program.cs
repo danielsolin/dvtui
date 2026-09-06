@@ -10,11 +10,17 @@ ConfigureWslBrowser();
 string url;
 if (args.Length > 0)
 {
-   url = args[0];
+    url = args[0];
+}
+else if (!string.IsNullOrWhiteSpace(
+    Environment.GetEnvironmentVariable("DVTUI_DEFAULT_ENV")
+))
+{
+    url = Environment.GetEnvironmentVariable("DVTUI_DEFAULT_ENV")!;
 }
 else
 {
-   url = AnsiConsole.Ask<string>("Enter Dataverse URL:");
+    url = AnsiConsole.Ask<string>("Enter Dataverse URL:");
 }
 
 try
