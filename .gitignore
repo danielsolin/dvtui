@@ -1,0 +1,9 @@
+Microsoft.VisualStudio.Web.CodeGeneration.Design
+bin/
+obj/
+.vs/
+.vscode/
+*.user
+*.userosdx
+*.suo
+*.sln.docstates
