@@ -6,7 +6,7 @@ using Spectre.Console;
 ConfigureWslBrowser();
 AnsiConsole.MarkupLine("[yellow]DVTUI - Dataverse Text User Interface[/]");
 
-var url = GetEnnvUrl(args);
+var url = GetEnvUrl(args);
 
 try
 {
