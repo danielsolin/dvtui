@@ -41,8 +41,7 @@ public class DataverseService : IDisposable
       }
    }
 
-   public async Task<List<DataverseColumn>> GetColumnsAsync(
-       string entityName)
+   public async Task<List<DataverseColumn>> GetColumnsAsync(string entityName)
    {
       var request = new RetrieveEntityRequest
       {
