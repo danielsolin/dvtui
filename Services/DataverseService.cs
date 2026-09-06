@@ -1,39 +1,49 @@
 using System;
 using System.Collections.Generic;
-using System.Linq;
 using System.Threading.Tasks;
 using Microsoft.PowerPlatform.Dataverse.Client;
-using Microsoft.Xrm.Sdk;
+using Microsoft.PowerPlatform.Dataverse.Client.Auth;
+using Microsoft.PowerPlatform.Dataverse.Client.Model;
 using Microsoft.Xrm.Sdk.Messages;
 using Microsoft.Xrm.Sdk.Metadata;
 using Dvtui.Models;
 
 namespace Dvtui.Services;
 
-public class DataverseService : IDataverseService, IDisposable
+public class DataverseService : IDisposable
 {
     private readonly ServiceClient _client;
-    private readonly string _url;
 
     public DataverseService(string url)
     {
-        _url = url.TrimEnd('/');
-        var connectionString = 
-            $"AuthType=OAuth;" +
-            $"Url={_url};" +
-            $"RedirectUri=http://localhost;" +
-            $"AllowCreateUserDialog=true;";
+        var options = new ConnectionOptions
+        {
+            AuthenticationType = AuthenticationType.OAuth,
+            ServiceUri = new Uri(url.TrimEnd('/')),
+            RedirectUri = new Uri("http://localhost"),
+            LoginPrompt = PromptBehavior.Auto,
+            SkipDiscovery = true
+        };
 
-        _client = new ServiceClient(connectionString);
+        _client = new ServiceClient(
+            options,
+            deferConnection: true
+        );
+    }
+
+    public void Connect()
+    {
+        _client.Connect();
 
         if (!_client.IsReady)
         {
-            throw new Exception($"Connection failed: {_client.LastError}");
+            throw new InvalidOperationException(
+                $"Connection failed: {_client.LastError}"
+            );
         }
     }
 
     public async Task<List<DataverseColumn>> GetColumnsAsync(
-        string url,
         string entityName)
     {
         var request = new RetrieveEntityRequest
@@ -44,7 +54,7 @@ public class DataverseService : IDataverseService, IDisposable
 
         var response = await _client.ExecuteAsync(request);
         var entityMetadata = (RetrieveEntityResponse)response;
-        
+
         var columns = new List<DataverseColumn>();
 
         if (entityMetadata.EntityMetadata.Attributes != null)
@@ -65,20 +75,13 @@ public class DataverseService : IDataverseService, IDisposable
         return columns;
     }
 
-    public async Task<List<DataverseRow>> GetDataAsync(
-        string url,
-        string entityName)
-    {
-        return await Task.FromResult(new List<DataverseRow>());
-    }
-
-    private string GetDisplayName(AttributeMetadata attribute)
+    private static string GetDisplayName(AttributeMetadata attribute)
     {
         return attribute.DisplayName?.UserLocalizedLabel?.Label ?? string.Empty;
     }
 
     public void Dispose()
     {
-        _client?.Dispose();
+        _client.Dispose();
     }
 }

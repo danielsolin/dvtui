@@ -1,46 +1,70 @@
-# DVTUI (Dataverse Text User Interface)
+# Repository Guidelines
 
-A lightweight TUI for interacting with Microsoft Dataverse via its Web API.
+## Project Structure
 
-## Goal
-Provide high-efficiency, low-distraction exploration of Dataverse metadata
-and data via terminal.
+DVTUI is a small .NET console application built around a terminal user
+interface.
 
-## Hard Rules
+- `Program.cs` contains startup, input handling, and screen rendering.
+- `Services/` contains Dataverse connection and metadata access code.
+- `Models/` contains data objects used by the TUI.
+- `dvtui.csproj` defines the .NET target and NuGet dependencies.
+- There is currently no test project or checked-in asset directory.
 
-- **80-Char Limit:** No line in any file may exceed 80 characters. This applies
-  to code, comments, and documentation.
-- **Language:** All project artifacts, including source code, comments, and
-  documentation, must be written in English.
-- **No Clever Code:** Prioritize readability and simplicity over complex
-  abstractions or "clever" one-liners.
-- **Clean Architecture:** Strict separation of concerns. No misplaced classes,
-  no dead code, and no "just in case" code.
-- **TUI Focus:** The primary interaction model is a Text User Interface.
-- **Minimalist Start:** Start with no arguments or at most one (the URL).
-- **Direct API Access:** Use the Web API directly.
-- **Code Style (Arguments):** If a method call cannot fit on a single line,
-  all arguments must be placed on individual new lines.
-  Example:
-  ```csharp
-  object.Method(
-      arg1,
-      arg2
-  );
-  ```
-- **Code Style (Chaining):** When chaining methods, the dot (.) must be placed
-  at the beginning of the new line.
-  Example:
-  ```csharp
-  object.Method()
-    .AnotherMethod();
-  ```
-- **No Unannounced Changes:** Do not make structural changes, or take any major decisions, without asking the operator first.
-- **Build Often:** Regularly build the project to ensure it continues to
-  compile.
+Keep presentation, Dataverse communication, and data models separate. Add
+new functionality to the narrowest appropriate area.
 
-## Technical Stack
+## Build, Run, and Development Commands
 
-- **Runtime:** .NET
-- **UI Library:** Spectre.Console
-- **Communication:** HttpClient (Web API)
+Restore dependencies and build the application with:
+
+```text
+dotnet restore
+dotnet build
+```
+
+Start interactively and enter the environment URL when prompted:
+
+```text
+dotnet run
+```
+
+The URL may also be supplied as the only argument:
+
+```text
+dotnet run -- "https://example.crm.dynamics.com"
+```
+
+Run `dotnet build` after changes. Use `dotnet test` if a test project is
+added; the repository currently has no automated tests.
+
+## Coding Style and Naming
+
+Use four spaces for indentation and keep every line at or below 80
+characters. All source, comments, and documentation must be in English.
+Prefer straightforward C# over clever abstractions. Use PascalCase for
+types and public members, camelCase for locals and parameters, and `_camelCase`
+for private fields.
+
+When a method call spans lines, put each argument on its own line. When a
+method chain spans lines, put the dot at the start of the next line.
+
+## Testing Guidelines
+
+No testing framework or coverage threshold is configured yet. New tests
+should be placed in a separate test project and named after the production
+type, for example `DataverseServiceTests`.
+
+## Commits and Pull Requests
+
+The current history contains only the initial `Init` commit, so no established
+convention exists. Use short, imperative commit subjects such as
+`Show connection status`. Pull requests should describe the behavior change,
+include validation commands and results, and include terminal screenshots
+when the TUI output changes.
+
+## Security and Configuration
+
+Do not commit access tokens, credentials, browser caches, or environment URLs
+that are not intended for public use. Authentication should remain in the
+interactive browser flow or approved local configuration.
