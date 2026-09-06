@@ -3,33 +3,18 @@ using Dvtui.Services;
 
 using Spectre.Console;
 
+ConfigureWslBrowser();
 AnsiConsole.MarkupLine("[yellow]DVTUI - Dataverse Text User Interface[/]");
 
-ConfigureWslBrowser();
-
-string url;
-if (args.Length > 0)
-{
-    url = args[0];
-}
-else if (!string.IsNullOrWhiteSpace(
-    Environment.GetEnvironmentVariable("DVTUI_DEFAULT_ENV")
-))
-{
-    url = Environment.GetEnvironmentVariable("DVTUI_DEFAULT_ENV")!;
-}
-else
-{
-    url = AnsiConsole.Ask<string>("Enter Dataverse URL:");
-}
+var url = GetEnvUrl(args);
 
 try
 {
    using var service = new DataverseService(url);
 
    AnsiConsole.MarkupLine(
-       "[grey]Connecting; sign in in your browser if prompted...[/]"
-   );
+          "[grey]Connecting; sign in in your browser if prompted...[/]"
+      );
 
    AnsiConsole.Status().Start(
        "Connecting to Dataverse...",
@@ -95,4 +80,27 @@ static void ConfigureWslBrowser()
    {
       Environment.SetEnvironmentVariable("DE", "wsl");
    }
+}
+
+static string GetEnvUrl(string[] args)
+{
+   string envVarName = "DVTUI_DEFAULT_ENV";
+   string url = "";
+
+   if (args.Length > 0)
+   {
+      url = args[0];
+   }
+   else if (!string.IsNullOrWhiteSpace(
+       Environment.GetEnvironmentVariable(envVarName)
+   ))
+   {
+      url = Environment.GetEnvironmentVariable(envVarName)!;
+   }
+   else
+   {
+      url = AnsiConsole.Ask<string>("Enter Dataverse URL:");
+   }
+
+   return url;
 }
