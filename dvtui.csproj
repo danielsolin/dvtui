@@ -9,7 +9,7 @@
 
   <ItemGroup>
     <Compile Remove="tests/**/*.cs" />
-    <InternalsVisibleTo Include="Dvtui.TerminalTests" />
+    <InternalsVisibleTo Include="dvtui.TerminalTests" />
   </ItemGroup>
 
   <ItemGroup>

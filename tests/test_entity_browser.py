@@ -11,8 +11,8 @@ import time
 
 
 TEST_DIRECTORY = Path(__file__).resolve().parent
-PROJECT = TEST_DIRECTORY / "Dvtui.TerminalTests" / "Dvtui.TerminalTests.csproj"
-ASSEMBLY = PROJECT.parent / "bin" / "Debug" / "net10.0" / "Dvtui.TerminalTests.dll"
+PROJECT = TEST_DIRECTORY / "dvtui.TerminalTests" / "dvtui.TerminalTests.csproj"
+ASSEMBLY = PROJECT.parent / "bin" / "Debug" / "net10.0" / "dvtui.TerminalTests.dll"
 subprocess.run(["dotnet", "build", str(PROJECT)], check=True)
 
 

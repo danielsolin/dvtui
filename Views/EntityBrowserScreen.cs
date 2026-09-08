@@ -1,9 +1,9 @@
-using Dvtui.Models;
+using dvtui.Models;
 
 using Spectre.Console;
 using Spectre.Console.Rendering;
 
-namespace Dvtui.Views;
+namespace dvtui.Views;
 
 internal sealed class EntityBrowserScreen
 {

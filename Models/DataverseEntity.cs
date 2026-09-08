@@ -1,4 +1,4 @@
-namespace Dvtui.Models;
+namespace dvtui.Models;
 
 public sealed class DataverseEntity
 {

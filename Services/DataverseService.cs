@@ -1,4 +1,4 @@
-using Dvtui.Models;
+using dvtui.Models;
 
 using Microsoft.PowerPlatform.Dataverse.Client;
 using Microsoft.PowerPlatform.Dataverse.Client.Auth;
@@ -7,7 +7,7 @@ using Label = Microsoft.Xrm.Sdk.Label;
 using Microsoft.Xrm.Sdk.Messages;
 using Microsoft.Xrm.Sdk.Metadata;
 
-namespace Dvtui.Services;
+namespace dvtui.Services;
 
 public class DataverseService : IDisposable
 {

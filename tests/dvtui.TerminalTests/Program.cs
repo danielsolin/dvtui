@@ -1,5 +1,5 @@
-using Dvtui.Models;
-using Dvtui.Views;
+using dvtui.Models;
+using dvtui.Views;
 
 var mode = args.FirstOrDefault() ?? "normal";
 var attempts = 0;

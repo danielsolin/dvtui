@@ -1,11 +1,11 @@
 using Spectre.Console;
 using Spectre.Console.Rendering;
 
-namespace Dvtui.Views;
+namespace dvtui.Views;
 
 internal sealed class StartupScreen
 {
-    private const string ApplicationName = "DVTUI";
+    private const string ApplicationName = "dvtui";
     private const int RefreshIntervalMilliseconds = 80;
     private const int FormWidth = 60;
     private readonly UrlTextBox _url;
