@@ -3,7 +3,8 @@
 ## General
 
 This project is for fun and learning. Only produce code or edit files after
-first discussing it with the operator.
+first discussing it with the operator. Do not change anything that the operator
+did not clearly ask for.
 
 ## Project Structure
 
