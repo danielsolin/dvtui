@@ -55,8 +55,6 @@ internal static class EntityDetailsView
     )
     {
         var table = new Table()
-            .NoBorder()
-            .HideHeaders()
             .AddColumn(new TableColumn("Field").NoWrap())
             .AddColumn(new TableColumn("Type").NoWrap())
             .AddColumn("Description");
