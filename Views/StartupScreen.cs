@@ -20,7 +20,7 @@ internal sealed class StartupScreen
 
     public static bool Show(string initialUrl, Action<string> connect)
     {
-        if(Console.IsInputRedirected || Console.IsOutputRedirected)
+        if( Console.IsInputRedirected || Console.IsOutputRedirected )
         {
             var url = string.IsNullOrWhiteSpace(initialUrl)
                 ? AnsiConsole.Ask<string>("Enter Dataverse URL:")
@@ -56,17 +56,17 @@ internal sealed class StartupScreen
     private bool Run(LiveDisplayContext context, Action<string> connect)
     {
         var lastSize = (Width: 0, Height: 0);
-        while(true)
+        while( true )
         {
             var refresh = false;
-            if(_connection?.IsCompleted == true)
+            if( _connection?.IsCompleted == true )
             {
                 try
                 {
                     _connection.GetAwaiter().GetResult();
                     return true;
                 }
-                catch(Exception ex)
+                catch( Exception ex )
                 {
                     _message = $"Connection failed: {ex.Message}";
                     _connection = null;
@@ -74,20 +74,20 @@ internal sealed class StartupScreen
                 }
             }
 
-            while(Console.KeyAvailable)
+            while( Console.KeyAvailable )
             {
                 var key = Console.ReadKey(intercept: true);
-                if(_connection != null)
+                if( _connection != null )
                 {
                     continue;
                 }
 
-                if(key.Key == ConsoleKey.Escape || key.KeyChar == '\u0003')
+                if( key.Key == ConsoleKey.Escape || key.KeyChar == '\u0003' )
                 {
                     return false;
                 }
 
-                if(key.Key == ConsoleKey.Enter)
+                if( key.Key == ConsoleKey.Enter )
                 {
                     StartConnection(connect);
                 }
@@ -100,7 +100,7 @@ internal sealed class StartupScreen
             }
 
             var size = (AnsiConsole.Profile.Width, AnsiConsole.Profile.Height);
-            if(refresh || _connection != null || size != lastSize)
+            if( refresh || _connection != null || size != lastSize )
             {
                 context.UpdateTarget(Render());
                 lastSize = size;
@@ -113,15 +113,15 @@ internal sealed class StartupScreen
     private void StartConnection(Action<string> connect)
     {
         var url = _url.Value.Trim();
-        if(!url.Contains("://", StringComparison.Ordinal))
+        if( !url.Contains("://", StringComparison.Ordinal) )
         {
             url = $"https://{url}";
         }
 
-        if(!Uri.TryCreate(url, UriKind.Absolute, out var uri)
+        if( !Uri.TryCreate(url, UriKind.Absolute, out var uri)
             || uri.Scheme != Uri.UriSchemeHttps
             || string.IsNullOrWhiteSpace(uri.Host)
-            || !string.IsNullOrEmpty(uri.UserInfo))
+            || !string.IsNullOrEmpty(uri.UserInfo) )
         {
             _message = "Enter a valid HTTPS Dataverse URL.";
             return;

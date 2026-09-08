@@ -4,7 +4,8 @@
 
 This project is for fun and learning. Only produce code or edit files after
 first discussing it with the operator. Do not change anything that the operator
-did not clearly ask for.
+did not ask for. If further changes are required to finish a task, stop and ask
+how to proceed.
 
 ## Project Structure
 

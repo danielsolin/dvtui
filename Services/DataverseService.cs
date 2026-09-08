@@ -16,7 +16,7 @@ public class DataverseService : IDisposable
     public DataverseService(string url)
     {
         url = url.Replace("http://", "").TrimEnd('/');
-        if(url.StartsWith("https://") == false)
+        if( url.StartsWith("https://") == false )
             url = "https://" + url;
 
         var options = new ConnectionOptions
@@ -35,7 +35,7 @@ public class DataverseService : IDisposable
     {
         _client.Connect();
 
-        if(!_client.IsReady)
+        if( !_client.IsReady )
         {
             throw new InvalidOperationException($"Connection failed: {_client.LastError}");
         }
@@ -56,7 +56,7 @@ public class DataverseService : IDisposable
             cancellationToken
         );
         var entities = new List<DataverseEntity>();
-        foreach(var metadata in response.EntityMetadata)
+        foreach( var metadata in response.EntityMetadata )
         {
             entities.Add(new DataverseEntity
             {

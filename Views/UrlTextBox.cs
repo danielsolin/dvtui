@@ -17,7 +17,7 @@ internal sealed class UrlTextBox
 
     public void HandleKey(ConsoleKeyInfo key)
     {
-        switch(key.Key)
+        switch( key.Key )
         {
             case ConsoleKey.LeftArrow:
                 _cursor = Math.Max(0, _cursor - 1);
@@ -39,7 +39,7 @@ internal sealed class UrlTextBox
                 Value = Value.Remove(_cursor, 1);
                 break;
             default:
-                if(!char.IsControl(key.KeyChar))
+                if( !char.IsControl(key.KeyChar) )
                 {
                     Value = Value.Insert(_cursor, key.KeyChar.ToString());
                     _cursor++;
@@ -53,12 +53,12 @@ internal sealed class UrlTextBox
         width = Math.Max(1, width);
         var start = Math.Max(0, _cursor - width + 1);
         var visible = Value[start..];
-        if(visible.Length > width)
+        if( visible.Length > width )
         {
             visible = visible[..width];
         }
 
-        if(!focused)
+        if( !focused )
         {
             return new Text(visible);
         }

@@ -26,14 +26,14 @@ try
         }
     );
 
-    if(!connected || service == null)
+    if( !connected || service == null )
     {
         return;
     }
 
     EntityBrowserScreen.Show(service.GetEntitiesAsync);
 }
-catch(Exception ex)
+catch( Exception ex )
 {
     AnsiConsole.MarkupLine($"[red]Error: {Markup.Escape(ex.Message)}[/]");
 }
@@ -44,19 +44,19 @@ finally
 
 static void ConfigureWslBrowser()
 {
-    if(!OperatingSystem.IsLinux())
+    if( !OperatingSystem.IsLinux() )
     {
         return;
     }
 
     var wslDistribution = Environment.GetEnvironmentVariable("WSL_DISTRO_NAME");
 
-    if(string.IsNullOrWhiteSpace(wslDistribution))
+    if( string.IsNullOrWhiteSpace(wslDistribution) )
     {
         return;
     }
 
-    if(string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("DE")))
+    if( string.IsNullOrWhiteSpace(Environment.GetEnvironmentVariable("DE")) )
     {
         Environment.SetEnvironmentVariable("DE", "wsl");
     }
