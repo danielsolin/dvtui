@@ -2,13 +2,14 @@
 
 ## General
 
-This project is for fun and learning. Only produce code after first discussing
-it with the operator.
+This project is for fun and learning. Only produce code or edit files after
+first discussing it with the operator.
 
 ## Project Structure
 
 DVTUI is a small .NET console application built around a terminal user
-interface.
+interface. It's goal is to let a user administrate a Dataverse environment from
+the terminal.
 
 - `Program.cs` contains startup, input handling, and screen rendering.
 - `Services/` contains Dataverse connection and metadata access code.
