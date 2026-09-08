@@ -20,18 +20,14 @@ internal sealed class EntityBrowserScreen
     private int _firstVisible;
     private bool _detailsFocused;
 
-    private EntityBrowserScreen(
-        Func<CancellationToken, Task<List<DataverseEntity>>> load
-    )
+    private EntityBrowserScreen(Func<CancellationToken, Task<List<DataverseEntity>>> load)
     {
         _load = load;
     }
 
-    public static void Show(
-        Func<CancellationToken, Task<List<DataverseEntity>>> load
-    )
+    public static void Show(Func<CancellationToken, Task<List<DataverseEntity>>> load)
     {
-        if (Console.IsInputRedirected || Console.IsOutputRedirected)
+        if(Console.IsInputRedirected || Console.IsOutputRedirected)
         {
             AnsiConsole.WriteLine("The table browser needs a terminal.");
             return;
@@ -65,26 +61,25 @@ internal sealed class EntityBrowserScreen
         var lastSize = (Width: 0, Height: 0);
         try
         {
-            while (true)
+            while(true)
             {
                 var refresh = false;
-                if (pendingLoad != null && pendingLoad.IsCompleted)
+                if(pendingLoad != null && pendingLoad.IsCompleted)
                 {
                     await CompleteLoadAsync(pendingLoad, cancellation.Token);
                     pendingLoad = null;
                     refresh = true;
                 }
 
-                while (Console.KeyAvailable)
+                while(Console.KeyAvailable)
                 {
                     var key = Console.ReadKey(intercept: true);
-                    if (key.Key == ConsoleKey.Escape
-                        || key.KeyChar == '\u0003')
+                    if(key.Key == ConsoleKey.Escape || key.KeyChar == '\u0003')
                     {
                         return;
                     }
 
-                    if (key.Key == ConsoleKey.R && pendingLoad == null)
+                    if(key.Key == ConsoleKey.R && pendingLoad == null)
                     {
                         pendingLoad = StartLoad(cancellation.Token);
                     }
@@ -96,11 +91,8 @@ internal sealed class EntityBrowserScreen
                     refresh = true;
                 }
 
-                var size = (
-                    AnsiConsole.Profile.Width,
-                    AnsiConsole.Profile.Height
-                );
-                if (refresh || size != lastSize)
+                var size = (AnsiConsole.Profile.Width, AnsiConsole.Profile.Height);
+                if(refresh || size != lastSize)
                 {
                     context.UpdateTarget(Render());
                     lastSize = size;
@@ -112,16 +104,14 @@ internal sealed class EntityBrowserScreen
         finally
         {
             await cancellation.CancelAsync();
-            if (pendingLoad != null)
+            if(pendingLoad != null)
             {
                 await CompleteLoadAsync(pendingLoad, cancellation.Token);
             }
         }
     }
 
-    private Task<List<DataverseEntity>> StartLoad(
-        CancellationToken cancellationToken
-    )
+    private Task<List<DataverseEntity>> StartLoad(CancellationToken cancellationToken)
     {
         _status = "Loading tables...";
         return Task.Run(() => _load(cancellationToken), cancellationToken);
@@ -135,9 +125,7 @@ internal sealed class EntityBrowserScreen
         try
         {
             var entities = await pendingLoad;
-            _entities = entities
-                .Where(entity => entity.IsCustomizable == true)
-                .ToList();
+            _entities = entities.Where(entity => entity.IsCustomizable == true).ToList();
             _selected = 0;
             _firstVisible = 0;
             SelectEntity();
@@ -145,11 +133,10 @@ internal sealed class EntityBrowserScreen
                 ? "No customizable tables found. R: reload."
                 : $"{_entities.Count} tables | Customizable only";
         }
-        catch (OperationCanceledException)
-            when (cancellationToken.IsCancellationRequested)
+        catch(OperationCanceledException) when(cancellationToken.IsCancellationRequested)
         {
         }
-        catch (Exception ex)
+        catch(Exception ex)
         {
             _status = "Could not load tables. Press R to retry.";
             _details = new ScrollableContent(new Text(ex.Message));
@@ -158,7 +145,7 @@ internal sealed class EntityBrowserScreen
 
     private void HandleKey(ConsoleKeyInfo key)
     {
-        if (key.Key == ConsoleKey.Tab)
+        if(key.Key == ConsoleKey.Tab)
         {
             _detailsFocused = !_detailsFocused;
             return;
@@ -180,14 +167,14 @@ internal sealed class EntityBrowserScreen
             _ => current
         };
 
-        if (_detailsFocused && _details != null)
+        if(_detailsFocused && _details != null)
         {
             _details.Offset = Math.Clamp(next, 0, last);
         }
-        else if (_entities.Count > 0)
+        else if(_entities.Count > 0)
         {
             var selected = Math.Clamp(next, 0, _entities.Count - 1);
-            if (selected != _selected)
+            if(selected != _selected)
             {
                 _selected = selected;
                 SelectEntity();
@@ -199,9 +186,7 @@ internal sealed class EntityBrowserScreen
     {
         _details = _entities.Count == 0
             ? null
-            : new ScrollableContent(
-                EntityDetailsView.Create(_entities[_selected])
-            );
+            : new ScrollableContent(EntityDetailsView.Create(_entities[_selected]));
     }
 
     private static int GetPageSize()
@@ -213,22 +198,20 @@ internal sealed class EntityBrowserScreen
     {
         var width = AnsiConsole.Profile.Width;
         var height = AnsiConsole.Profile.Height;
-        if (width < MinimumWidth || height < MinimumHeight)
+        if(width < MinimumWidth || height < MinimumHeight)
         {
             return new Text("Enlarge the terminal (60 x 10). Esc: quit.");
         }
 
         var sidebarWidth = width / SidebarWidthDivisor;
-        var list = new Panel(RenderEntities(
-            sidebarWidth - PanelHorizontalOverhead
-        ))
+        var list = new Panel(RenderEntities(sidebarWidth - PanelHorizontalOverhead))
             .Header("Tables")
             .RoundedBorder()
             .BorderColor(_detailsFocused ? Color.Grey : Color.Cyan1)
             .Expand();
         list.Height = height - 2;
 
-        if (_details != null)
+        if(_details != null)
         {
             _details.Height = GetPageSize();
         }
@@ -262,7 +245,7 @@ internal sealed class EntityBrowserScreen
             _selected
         );
         var rows = new List<IRenderable>();
-        for (var index = _firstVisible;
+        for(var index = _firstVisible;
             index < Math.Min(_entities.Count, _firstVisible + pageSize);
             index++)
         {
@@ -272,7 +255,7 @@ internal sealed class EntityBrowserScreen
                 : Style.Plain;
             var prefix = selected ? "> " : "  ";
             var label = prefix + _entities[index].LogicalName;
-            if (label.Length > width)
+            if(label.Length > width)
             {
                 label = label[..(width - 1)] + "…";
             }

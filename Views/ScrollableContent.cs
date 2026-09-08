@@ -22,14 +22,14 @@ internal sealed class ScrollableContent(IRenderable content) : IRenderable
         Offset = Math.Clamp(Offset, 0, MaximumOffset);
         var visibleLines = lines.Skip(Offset).Take(Height).ToList();
 
-        for (var index = 0; index < visibleLines.Count; index++)
+        for(var index = 0; index < visibleLines.Count; index++)
         {
-            if (index > 0)
+            if(index > 0)
             {
                 yield return Segment.LineBreak;
             }
 
-            foreach (var segment in visibleLines[index])
+            foreach(var segment in visibleLines[index])
             {
                 yield return segment;
             }

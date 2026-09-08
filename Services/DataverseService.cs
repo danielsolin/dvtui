@@ -16,7 +16,7 @@ public class DataverseService : IDisposable
     public DataverseService(string url)
     {
         url = url.Replace("http://", "").TrimEnd('/');
-        if (url.StartsWith("https://") == false)
+        if(url.StartsWith("https://") == false)
             url = "https://" + url;
 
         var options = new ConnectionOptions
@@ -28,21 +28,16 @@ public class DataverseService : IDisposable
             SkipDiscovery = true
         };
 
-        _client = new ServiceClient(
-            options,
-            deferConnection: true
-        );
+        _client = new ServiceClient(options, deferConnection: true);
     }
 
     public void Connect()
     {
         _client.Connect();
 
-        if (!_client.IsReady)
+        if(!_client.IsReady)
         {
-            throw new InvalidOperationException(
-                $"Connection failed: {_client.LastError}"
-            );
+            throw new InvalidOperationException($"Connection failed: {_client.LastError}");
         }
     }
 
@@ -61,7 +56,7 @@ public class DataverseService : IDisposable
             cancellationToken
         );
         var entities = new List<DataverseEntity>();
-        foreach (var metadata in response.EntityMetadata)
+        foreach(var metadata in response.EntityMetadata)
         {
             entities.Add(new DataverseEntity
             {
@@ -71,10 +66,8 @@ public class DataverseService : IDisposable
                 CollectionName = GetLabel(metadata.DisplayCollectionName),
                 Description = GetLabel(metadata.Description),
                 EntitySetName = metadata.EntitySetName ?? string.Empty,
-                PrimaryIdAttribute = metadata.PrimaryIdAttribute
-                    ?? string.Empty,
-                PrimaryNameAttribute = metadata.PrimaryNameAttribute
-                    ?? string.Empty,
+                PrimaryIdAttribute = metadata.PrimaryIdAttribute ?? string.Empty,
+                PrimaryNameAttribute = metadata.PrimaryNameAttribute ?? string.Empty,
                 OwnershipType = metadata.OwnershipType?.ToString(),
                 ObjectTypeCode = metadata.ObjectTypeCode,
                 IsCustom = metadata.IsCustomEntity,
@@ -84,9 +77,7 @@ public class DataverseService : IDisposable
             });
         }
 
-        return entities
-            .OrderBy(entity => entity.LogicalName, StringComparer.Ordinal)
-            .ToList();
+        return entities.OrderBy(entity => entity.LogicalName, StringComparer.Ordinal).ToList();
     }
 
     private static string GetLabel(Label? label)

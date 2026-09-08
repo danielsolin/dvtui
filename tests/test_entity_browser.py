@@ -12,9 +12,7 @@ import time
 
 TEST_DIRECTORY = Path(__file__).resolve().parent
 PROJECT = TEST_DIRECTORY / "Dvtui.TerminalTests" / "Dvtui.TerminalTests.csproj"
-ASSEMBLY = (
-    PROJECT.parent / "bin" / "Debug" / "net10.0" / "Dvtui.TerminalTests.dll"
-)
+ASSEMBLY = PROJECT.parent / "bin" / "Debug" / "net10.0" / "Dvtui.TerminalTests.dll"
 subprocess.run(["dotnet", "build", str(PROJECT)], check=True)
 
 
@@ -37,11 +35,7 @@ class Browser:
         os.close(slave)
 
     def resize(self, rows, columns):
-        fcntl.ioctl(
-            self.fd,
-            termios.TIOCSWINSZ,
-            struct.pack("HHHH", rows, columns, 0, 0),
-        )
+        fcntl.ioctl(self.fd, termios.TIOCSWINSZ, struct.pack("HHHH", rows, columns, 0, 0))
         if hasattr(self, "process"):
             os.kill(self.process.pid, signal.SIGWINCH)
 
@@ -159,21 +153,13 @@ try:
     for index in range(1, 75):
         os.write(browser.fd, b"\x1b[B")
         screen = browser.read(0.15)
-        left = [
-            line.split("│")[1]
-            for line in screen.splitlines()
-            if line.startswith("│")
-        ]
+        left = [line.split("│")[1] for line in screen.splitlines() if line.startswith("│")]
         assert len(left) == 20, (index, left)
         assert any(f"> table_{index:03}_wit…" in row for row in left)
     for index in range(73, -1, -1):
         os.write(browser.fd, b"\x1b[A")
         screen = browser.read(0.15)
-        left = [
-            line.split("│")[1]
-            for line in screen.splitlines()
-            if line.startswith("│")
-        ]
+        left = [line.split("│")[1] for line in screen.splitlines() if line.startswith("│")]
         assert any(f"> table_{index:03}_wit…" in row for row in left)
     browser.resize(30, 100)
     wider = browser.read(0.4)
