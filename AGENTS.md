@@ -1,5 +1,10 @@
 # Repository Guidelines
 
+## General
+
+This project is for fun and learning. Only produce code after first discussing
+it with the operator.
+
 ## Project Structure
 
 DVTUI is a small .NET console application built around a terminal user
@@ -43,34 +48,9 @@ python3 tests/test_entity_browser.py
 
 See `tests/README.md` for requirements and coverage.
 
-## Coding Style and Naming
-
-Use four spaces for indentation and keep every line at or below 80
-characters. All source, comments, and documentation must be in English.
-Prefer straightforward C# over clever abstractions. Use PascalCase for
-types and public members, camelCase for locals and parameters, and `_camelCase`
-for private fields.
-
-When a method call spans lines, put each argument on its own line. When a
-method chain spans lines, put the dot at the start of the next line.
-
 ## Testing Guidelines
 
 Keep tests under `tests/`. Terminal integration tests use a separate host
 that references the application and supplies simulated metadata. No unit
 testing framework or coverage threshold is configured yet. Name new tests
 after the production type, for example `DataverseServiceTests`.
-
-## Commits and Pull Requests
-
-The current history contains only the initial `Init` commit, so no established
-convention exists. Use short, imperative commit subjects such as
-`Show connection status`. Pull requests should describe the behavior change,
-include validation commands and results, and include terminal screenshots
-when the TUI output changes.
-
-## Security and Configuration
-
-Do not commit access tokens, credentials, browser caches, or environment URLs
-that are not intended for public use. Authentication should remain in the
-interactive browser flow or approved local configuration.
