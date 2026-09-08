@@ -7,7 +7,24 @@ namespace dvtui.Views;
 
 internal static class EntityDetailsView
 {
-    public static IRenderable Create(DataverseEntity entity)
+    public static IRenderable Create(
+        DataverseEntity entity,
+        IReadOnlyList<DataverseField>? fields
+    )
+    {
+        var content = new List<IRenderable>
+        {
+            CreatePropertiesTable(entity)
+        };
+        if( fields != null )
+        {
+            content.Add(CreateFieldsTable(entity, fields));
+        }
+
+        return new Rows(content);
+    }
+
+    private static IRenderable CreatePropertiesTable(DataverseEntity entity)
     {
         var table = new Table()
             .NoBorder()
@@ -30,6 +47,62 @@ internal static class EntityDetailsView
         AddRow(table, "Activity", FormatBoolean(entity.IsActivity));
         AddRow(table, "Description", entity.Description);
         return table;
+    }
+
+    private static IRenderable CreateFieldsTable(
+        DataverseEntity entity,
+        IReadOnlyList<DataverseField> fields
+    )
+    {
+        var table = new Table()
+            .NoBorder()
+            .HideHeaders()
+            .AddColumn(new TableColumn("Field").NoWrap())
+            .AddColumn(new TableColumn("Type").NoWrap())
+            .AddColumn("Description");
+
+        if( fields.Count == 0 )
+        {
+            table.AddRow(new Text("No fields found."));
+            return table;
+        }
+
+        foreach( var field in fields )
+        {
+            table.AddRow(
+                FieldLabel(entity, field),
+                new Text(field.Type),
+                new Text(field.Description)
+            );
+        }
+
+        return table;
+    }
+
+    private static IRenderable FieldLabel(
+        DataverseEntity entity,
+        DataverseField field
+    )
+    {
+        var name = field.SchemaName;
+
+        if( name == entity.PrimaryIdAttribute )
+        {
+            return new Text(
+                $"{name} (primary key)",
+                new Style(Color.DarkOrange3)
+            );
+        }
+
+        if( name == entity.PrimaryNameAttribute )
+        {
+            return new Text(
+                $"{name} (primary name)",
+                new Style(Color.DarkOrange3)
+            );
+        }
+
+        return new Text(name);
     }
 
     private static void AddRow(Table table, string label, string? value)

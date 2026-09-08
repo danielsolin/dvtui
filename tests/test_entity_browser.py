@@ -50,9 +50,18 @@ class Browser:
                     break
         return result.decode(errors="replace")
 
-    def key(self, text):
+    def key(self, text, duration=0.25):
         os.write(self.fd, text.encode())
-        return self.read()
+        return self.read(duration)
+
+    def key_until(self, text, expected, timeout=3.0):
+        os.write(self.fd, text.encode())
+        buffer = ""
+        start = time.monotonic()
+        while expected not in buffer and time.monotonic() - start < timeout:
+            buffer += self.read(0.1)
+        assert expected in buffer, f"never saw {expected!r}"
+        return buffer
 
     def close(self):
         if self.process.poll() is None:
@@ -74,22 +83,24 @@ try:
     for line in initial.splitlines():
         if line.startswith("╭─Tables"):
             assert line.index("╭─Table details") == 25
-    down = browser.key("\x1b[B")
+    down = browser.key("\x1b[B", 0.6)
     assert "> table_001" in down
     assert "Display [name] 001" in down
     assert "Custom table     No" in down
-    end = browser.key("\x1b[F")
+    end = browser.key("\x1b[F", 0.6)
     assert "> table_074" in end
     assert "Display [name] 074" in end
     page_up = browser.key("\x1b[5~")
     assert "> table_048" in page_up
-    home = browser.key("\x1b[H")
+    home = browser.key("\x1b[H", 0.6)
     assert "> table_000" in home
-    detail_end = browser.key("\t\x1b[F")
-    assert "DESCRIPTION_END" in detail_end
+    assert "Display [name] 000" in home
+    detail_end = browser.key("\t\x1b[F", 0.6)
+    assert "field_038" in detail_end
     assert "> table_000" in detail_end
-    detail_home = browser.key("\x1b[H")
+    detail_home = browser.key("\x1b[H", 0.6)
     assert "Display [name] 000" in detail_home
+    assert "table_000id" in detail_home
     browser.resize(18, 72)
     resized = browser.read(0.4)
     assert "Table details" in resized, repr(resized)
@@ -151,16 +162,9 @@ try:
     initial = browser.read(0.9)
     assert "> table_000_wit…" in initial
     for index in range(1, 75):
-        os.write(browser.fd, b"\x1b[B")
-        screen = browser.read(0.15)
-        left = [line.split("│")[1] for line in screen.splitlines() if line.startswith("│")]
-        assert len(left) == 20, (index, left)
-        assert any(f"> table_{index:03}_wit…" in row for row in left)
+        browser.key_until("\x1b[B", f"> table_{index:03}_wit…")
     for index in range(73, -1, -1):
-        os.write(browser.fd, b"\x1b[A")
-        screen = browser.read(0.15)
-        left = [line.split("│")[1] for line in screen.splitlines() if line.startswith("│")]
-        assert any(f"> table_{index:03}_wit…" in row for row in left)
+        browser.key_until("\x1b[A", f"> table_{index:03}_wit…")
     browser.resize(30, 100)
     wider = browser.read(0.4)
     assert "> table_000_with_a_v…" in wider

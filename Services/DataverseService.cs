@@ -58,26 +58,81 @@ public class DataverseService : IDisposable
         var entities = new List<DataverseEntity>();
         foreach( var metadata in response.EntityMetadata )
         {
-            entities.Add(new DataverseEntity
-            {
-                LogicalName = metadata.LogicalName ?? string.Empty,
-                SchemaName = metadata.SchemaName ?? string.Empty,
-                DisplayName = GetLabel(metadata.DisplayName),
-                CollectionName = GetLabel(metadata.DisplayCollectionName),
-                Description = GetLabel(metadata.Description),
-                EntitySetName = metadata.EntitySetName ?? string.Empty,
-                PrimaryIdAttribute = metadata.PrimaryIdAttribute ?? string.Empty,
-                PrimaryNameAttribute = metadata.PrimaryNameAttribute ?? string.Empty,
-                OwnershipType = metadata.OwnershipType?.ToString(),
-                ObjectTypeCode = metadata.ObjectTypeCode,
-                IsCustom = metadata.IsCustomEntity,
-                IsCustomizable = metadata.IsCustomizable?.Value,
-                IsManaged = metadata.IsManaged,
-                IsActivity = metadata.IsActivity
-            });
+            entities.Add(CreateEntity(metadata));
         }
 
         return entities.OrderBy(entity => entity.LogicalName, StringComparer.Ordinal).ToList();
+    }
+
+    public async Task<DataverseEntityDetails> GetEntityAsync(
+        string logicalName,
+        CancellationToken cancellationToken
+    )
+    {
+        var request = new RetrieveEntityRequest
+        {
+            EntityFilters = EntityFilters.Entity | EntityFilters.Attributes,
+            LogicalName = logicalName,
+            RetrieveAsIfPublished = false
+        };
+
+        var response = (RetrieveEntityResponse)await _client.ExecuteAsync(
+            request,
+            cancellationToken
+        );
+        var metadata = response.EntityMetadata;
+        return new DataverseEntityDetails
+        {
+            Entity = CreateEntity(metadata),
+            Fields = CreateFields(metadata)
+        };
+    }
+
+    private static DataverseEntity CreateEntity(EntityMetadata metadata)
+    {
+        return new DataverseEntity
+        {
+            LogicalName = metadata.LogicalName ?? string.Empty,
+            SchemaName = metadata.SchemaName ?? string.Empty,
+            DisplayName = GetLabel(metadata.DisplayName),
+            CollectionName = GetLabel(metadata.DisplayCollectionName),
+            Description = GetLabel(metadata.Description),
+            EntitySetName = metadata.EntitySetName ?? string.Empty,
+            PrimaryIdAttribute = metadata.PrimaryIdAttribute ?? string.Empty,
+            PrimaryNameAttribute = metadata.PrimaryNameAttribute ?? string.Empty,
+            OwnershipType = metadata.OwnershipType?.ToString(),
+            ObjectTypeCode = metadata.ObjectTypeCode,
+            IsCustom = metadata.IsCustomEntity,
+            IsCustomizable = metadata.IsCustomizable?.Value,
+            IsManaged = metadata.IsManaged,
+            IsActivity = metadata.IsActivity
+        };
+    }
+
+    private static IReadOnlyList<DataverseField> CreateFields(
+        EntityMetadata metadata
+    )
+    {
+        var fields = new List<DataverseField>();
+        if( metadata.Attributes == null )
+        {
+            return fields;
+        }
+
+        foreach( var attribute in metadata.Attributes )
+        {
+            fields.Add(new DataverseField
+            {
+                SchemaName = attribute.SchemaName ?? string.Empty,
+                DisplayName = GetLabel(attribute.DisplayName),
+                Type = attribute.AttributeType?.ToString() ?? string.Empty,
+                Description = GetLabel(attribute.Description)
+            });
+        }
+
+        return fields
+            .OrderBy(field => field.SchemaName, StringComparer.Ordinal)
+            .ToList();
     }
 
     private static string GetLabel(Label? label)

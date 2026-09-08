@@ -47,5 +47,31 @@ EntityBrowserScreen.Show(async cancellationToken =>
         LogicalName = "excluded_unknown"
     });
     return entities;
+}, (logicalName, _) =>
+{
+    var fields = new List<DataverseField>();
+    fields.Add(new DataverseField
+    {
+        SchemaName = logicalName + "id",
+        DisplayName = "Id",
+        Type = "UniqueIdentifier",
+        Description = "Primary key for " + logicalName + "."
+    });
+    for (var index = 0; index < 39; index++)
+    {
+        fields.Add(new DataverseField
+        {
+            SchemaName = $"field_{index:000}",
+            DisplayName = $"Field {index:000}",
+            Type = index % 3 == 0 ? "Lookup" : "String",
+            Description = $"Description for field {index:000}."
+        });
+    }
+
+    return Task.FromResult(new DataverseEntityDetails
+    {
+        Entity = new DataverseEntity { LogicalName = logicalName },
+        Fields = fields
+    });
 });
 Console.WriteLine($"Browser exited; attempts: {attempts}");

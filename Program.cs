@@ -37,7 +37,10 @@ internal static class Program
                 return;
             }
 
-            EntityBrowserScreen.Show(service.GetEntitiesAsync);
+            EntityBrowserScreen.Show(
+                service.GetEntitiesAsync,
+                service.GetEntityAsync
+            );
         }
         catch( Exception ex )
         {

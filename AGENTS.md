@@ -59,3 +59,8 @@ Keep tests under `tests/`. Terminal integration tests use a separate host
 that references the application and supplies simulated metadata. No unit
 testing framework or coverage threshold is configured yet. Name new tests
 after the production type, for example `DataverseServiceTests`.
+
+PTY reads return only bytes written during the read window (incremental
+redraws), and the app stops repainting once the screen is stable. Pace each
+key press until the expected content is visible before pressing the next key;
+do not assert on fixed read windows.

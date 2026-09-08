@@ -13,19 +13,30 @@ internal sealed class EntityBrowserScreen
     private const int SidebarWidthDivisor = 4;
     private const int PanelHorizontalOverhead = 4;
     private readonly Func<CancellationToken, Task<List<DataverseEntity>>> _load;
+    private readonly Func<string, CancellationToken, Task<DataverseEntityDetails>>
+        _loadDetails;
     private List<DataverseEntity> _entities = [];
     private ScrollableContent? _details;
     private string _status = "Loading tables...";
+    private string? _detailsRequest;
+    private Task<DataverseEntityDetails>? _pendingDetails;
     private int _selected;
     private int _firstVisible;
     private bool _detailsFocused;
 
-    private EntityBrowserScreen(Func<CancellationToken, Task<List<DataverseEntity>>> load)
+    private EntityBrowserScreen(
+        Func<CancellationToken, Task<List<DataverseEntity>>> load,
+        Func<string, CancellationToken, Task<DataverseEntityDetails>> loadDetails
+    )
     {
         _load = load;
+        _loadDetails = loadDetails;
     }
 
-    public static void Show(Func<CancellationToken, Task<List<DataverseEntity>>> load)
+    public static void Show(
+        Func<CancellationToken, Task<List<DataverseEntity>>> load,
+        Func<string, CancellationToken, Task<DataverseEntityDetails>> loadDetails
+    )
     {
         if( Console.IsInputRedirected || Console.IsOutputRedirected )
         {
@@ -33,7 +44,7 @@ internal sealed class EntityBrowserScreen
             return;
         }
 
-        var screen = new EntityBrowserScreen(load);
+        var screen = new EntityBrowserScreen(load, loadDetails);
         var previousControlCMode = Console.TreatControlCAsInput;
         AnsiConsole.AlternateScreen(() =>
         {
@@ -71,6 +82,13 @@ internal sealed class EntityBrowserScreen
                     refresh = true;
                 }
 
+                if( _pendingDetails != null && _pendingDetails.IsCompleted )
+                {
+                    await CompleteDetailsLoadAsync(_pendingDetails);
+                    _pendingDetails = null;
+                    refresh = true;
+                }
+
                 while( Console.KeyAvailable )
                 {
                     var key = Console.ReadKey(intercept: true);
@@ -85,7 +103,7 @@ internal sealed class EntityBrowserScreen
                     }
                     else
                     {
-                        HandleKey(key);
+                        HandleKey(key, cancellation.Token);
                     }
 
                     refresh = true;
@@ -108,6 +126,10 @@ internal sealed class EntityBrowserScreen
             {
                 await CompleteLoadAsync(pendingLoad, cancellation.Token);
             }
+            if( _pendingDetails != null )
+            {
+                await CompleteDetailsLoadAsync(_pendingDetails);
+            }
         }
     }
 
@@ -128,7 +150,7 @@ internal sealed class EntityBrowserScreen
             _entities = entities.Where(entity => entity.IsCustomizable == true).ToList();
             _selected = 0;
             _firstVisible = 0;
-            SelectEntity();
+            SelectEntity(cancellationToken);
             _status = _entities.Count == 0
                 ? "No customizable tables found. R: reload."
                 : $"{_entities.Count} tables | Customizable only";
@@ -143,7 +165,35 @@ internal sealed class EntityBrowserScreen
         }
     }
 
-    private void HandleKey(ConsoleKeyInfo key)
+    private async Task CompleteDetailsLoadAsync(
+        Task<DataverseEntityDetails> pendingDetails
+    )
+    {
+        try
+        {
+            var details = await pendingDetails;
+            if( _entities.Count == 0
+                || _detailsRequest != _entities[_selected].LogicalName )
+            {
+                return;
+            }
+
+            _details = new ScrollableContent(
+                EntityDetailsView.Create(_entities[_selected], details.Fields)
+            );
+        }
+        catch( OperationCanceledException )
+        {
+        }
+        catch( Exception ex )
+        {
+            _details = new ScrollableContent(
+                new Text($"Could not load fields: {ex.Message}")
+            );
+        }
+    }
+
+    private void HandleKey(ConsoleKeyInfo key, CancellationToken cancellationToken)
     {
         if( key.Key == ConsoleKey.Tab )
         {
@@ -177,16 +227,28 @@ internal sealed class EntityBrowserScreen
             if( selected != _selected )
             {
                 _selected = selected;
-                SelectEntity();
+                SelectEntity(cancellationToken);
             }
         }
     }
 
-    private void SelectEntity()
+    private void SelectEntity(CancellationToken cancellationToken)
     {
-        _details = _entities.Count == 0
-            ? null
-            : new ScrollableContent(EntityDetailsView.Create(_entities[_selected]));
+        if( _entities.Count == 0 )
+        {
+            _details = null;
+            _detailsRequest = null;
+            _pendingDetails = null;
+            return;
+        }
+
+        var entity = _entities[_selected];
+        _detailsRequest = entity.LogicalName;
+        _details = new ScrollableContent(new Text("Loading fields..."));
+        _pendingDetails = Task.Run(
+            () => _loadDetails(entity.LogicalName, cancellationToken),
+            cancellationToken
+        );
     }
 
     private static int GetPageSize()
