@@ -27,7 +27,8 @@ internal static class EntityDetailsView
     private static IRenderable CreatePropertiesTable(DataverseEntity entity)
     {
         var table = new Table()
-            .NoBorder()
+            .Border(TableBorder.Minimal)
+            .ShowRowSeparators()
             .HideHeaders()
             .AddColumn(new TableColumn("Property").NoWrap())
             .AddColumn("Value");
@@ -55,6 +56,8 @@ internal static class EntityDetailsView
     )
     {
         var table = new Table()
+            .Border(TableBorder.Minimal)
+            .ShowRowSeparators()
             .AddColumn(new TableColumn("Field").NoWrap())
             .AddColumn(new TableColumn("Type").NoWrap())
             .AddColumn("Description");
@@ -106,7 +109,7 @@ internal static class EntityDetailsView
     private static void AddRow(Table table, string label, string? value)
     {
         table.AddRow(
-            new Text(label, new Style(Color.Cyan1)),
+            new Text(label, new Style(Color.Grey58)),
             new Text(string.IsNullOrWhiteSpace(value) ? "—" : value)
         );
     }

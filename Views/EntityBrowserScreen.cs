@@ -269,7 +269,7 @@ internal sealed class EntityBrowserScreen
         var list = new Panel(RenderEntities(sidebarWidth - PanelHorizontalOverhead))
             .Header("Tables")
             .RoundedBorder()
-            .BorderColor(_detailsFocused ? Color.Grey : Color.Cyan1)
+            .BorderColor(_detailsFocused ? Color.Grey : Color.Grey58)
             .Expand();
         list.Height = height - 2;
 
@@ -281,7 +281,7 @@ internal sealed class EntityBrowserScreen
         var details = new Panel(_details ?? (IRenderable)new Text(_status))
             .Header("Table details")
             .RoundedBorder()
-            .BorderColor(_detailsFocused ? Color.Cyan1 : Color.Grey)
+            .BorderColor(_detailsFocused ? Color.Grey58 : Color.Grey)
             .Expand();
         details.Height = height - 2;
 
@@ -313,7 +313,7 @@ internal sealed class EntityBrowserScreen
         {
             var selected = index == _selected;
             var style = selected
-                ? new Style(Color.Black, Color.Cyan1)
+                ? new Style(Color.White, Color.LightSlateGrey)
                 : Style.Plain;
             var prefix = selected ? "> " : "  ";
             var label = prefix + _entities[index].LogicalName;
