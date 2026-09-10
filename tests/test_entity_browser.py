@@ -1,3 +1,4 @@
+import atexit
 import fcntl
 import os
 import pty
@@ -13,26 +14,53 @@ import time
 TEST_DIRECTORY = Path(__file__).resolve().parent
 PROJECT = TEST_DIRECTORY / "dvtui.TerminalTests" / "dvtui.TerminalTests.csproj"
 ASSEMBLY = PROJECT.parent / "bin" / "Debug" / "net10.0" / "dvtui.TerminalTests.dll"
-subprocess.run(["dotnet", "build", str(PROJECT)], check=True)
+PROCESS_STOP_TIMEOUT_SECONDS = 2
+ACTIVE_BROWSERS = set()
+subprocess.run(
+    ["dotnet", "build", str(PROJECT), "--disable-build-servers"],
+    check=True,
+)
+
+
+def close_active_browsers():
+    for browser in list(ACTIVE_BROWSERS):
+        browser.close()
+
+
+def handle_termination(signum, _frame):
+    close_active_browsers()
+    raise SystemExit(128 + signum)
+
+
+atexit.register(close_active_browsers)
+signal.signal(signal.SIGTERM, handle_termination)
 
 
 class Browser:
     def __init__(self, mode="normal"):
         self.fd, slave = pty.openpty()
-        self.resize(30, 100)
-        env = dict(os.environ, TERM="xterm-256color", NO_COLOR="1")
-        self.process = subprocess.Popen(
-            [
-                "dotnet",
-                str(ASSEMBLY),
-                mode,
-            ],
-            stdin=slave,
-            stdout=slave,
-            stderr=slave,
-            env=env,
-        )
-        os.close(slave)
+        self.closed = False
+        try:
+            self.resize(30, 100)
+            env = dict(os.environ, TERM="xterm-256color", NO_COLOR="1")
+            self.process = subprocess.Popen(
+                [
+                    "dotnet",
+                    str(ASSEMBLY),
+                    mode,
+                ],
+                stdin=slave,
+                stdout=slave,
+                stderr=slave,
+                env=env,
+                start_new_session=True,
+            )
+            ACTIVE_BROWSERS.add(self)
+        except BaseException:
+            os.close(self.fd)
+            raise
+        finally:
+            os.close(slave)
 
     def resize(self, rows, columns):
         fcntl.ioctl(self.fd, termios.TIOCSWINSZ, struct.pack("HHHH", rows, columns, 0, 0))
@@ -64,11 +92,44 @@ class Browser:
         return buffer
 
     def close(self):
-        if self.process.poll() is None:
-            self.process.kill()
-        self.process.wait(timeout=2)
-        os.close(self.fd)
+        if self.closed:
+            return
 
+        self.closed = True
+        ACTIVE_BROWSERS.discard(self)
+        try:
+            if self.process.poll() is None:
+                self.signal_process_group(signal.SIGTERM)
+                try:
+                    self.process.wait(timeout=PROCESS_STOP_TIMEOUT_SECONDS)
+                except subprocess.TimeoutExpired:
+                    self.signal_process_group(signal.SIGKILL)
+                    self.process.wait(timeout=PROCESS_STOP_TIMEOUT_SECONDS)
+            else:
+                self.process.wait(timeout=PROCESS_STOP_TIMEOUT_SECONDS)
+        finally:
+            os.close(self.fd)
+
+    def signal_process_group(self, signal_number):
+        try:
+            os.killpg(self.process.pid, signal_number)
+        except ProcessLookupError:
+            pass
+
+
+browser = Browser("startup")
+try:
+    initial = browser.read(0.9)
+    assert "Enter: connect | Q: quit" in initial
+    browser.key("\r")
+    connecting = browser.read(0.4)
+    assert "Connecting..." in connecting
+    exited = browser.key_until("q", "Startup exited; connected: False", timeout=3.0)
+    assert "\x1b[?1049l" in exited
+    assert browser.process.wait(timeout=1) == 0
+    print("PASS: startup cancellation and terminal reset")
+finally:
+    browser.close()
 
 browser = Browser()
 try:
@@ -86,7 +147,8 @@ try:
     down = browser.key("\x1b[B", 0.6)
     assert "> table_001" in down
     assert "Display [name] 001" in down
-    assert "Custom table     No" in down
+    assert "Custom table" in down
+    assert "│ No" in down
     end = browser.key("\x1b[F", 0.6)
     assert "> table_074" in end
     assert "Display [name] 074" in end
@@ -111,7 +173,7 @@ try:
     browser.resize(30, 100)
     restored = browser.read(0.4)
     assert "Display [name] 000" in restored
-    exited = browser.key("\x1b")
+    exited = browser.key("q")
     assert "Browser exited; attempts: 1" in exited
     assert "\x1b[?1049l" in exited
     assert browser.process.wait(timeout=2) == 0
@@ -127,7 +189,7 @@ try:
     browser.key("r")
     recovered = browser.read(0.6)
     assert "75 tables | Customizable only" in recovered
-    exited = browser.key("\x1b")
+    exited = browser.key("q")
     assert "Browser exited; attempts: 2" in exited
     print("PASS: metadata failure and reload")
 finally:
@@ -138,7 +200,7 @@ try:
     empty = browser.read(0.9)
     assert "No customizable tables found" in empty
     browser.key("\x1b[B\x1b[F\t\x1b[B")
-    exited = browser.key("\x1b")
+    exited = browser.key("q")
     assert "Browser exited; attempts: 1" in exited
     print("PASS: empty metadata list and navigation")
 finally:
@@ -153,6 +215,17 @@ try:
     assert "\x1b[?1049l" in exited
     assert browser.process.wait(timeout=2) == 0
     print("PASS: cancellation during metadata load")
+finally:
+    browser.close()
+
+browser = Browser("uncooperative")
+try:
+    loading = browser.read(0.3)
+    assert "Loading tables..." in loading
+    exited = browser.key_until("q", "Browser exited; attempts: 1", timeout=4.0)
+    assert "\x1b[?1049l" in exited
+    assert browser.process.wait(timeout=1) == 0
+    print("PASS: shutdown timeout for an uncooperative metadata task")
 finally:
     browser.close()
 
@@ -171,7 +244,7 @@ try:
     browser.resize(18, 72)
     narrower = browser.read(0.4)
     assert "> table_000_w…" in narrower
-    browser.key("\x1b")
+    browser.key("q")
     print("PASS: long names, every arrow step stays visible, dynamic clipping")
 finally:
     browser.close()

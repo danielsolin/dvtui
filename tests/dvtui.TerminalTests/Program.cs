@@ -2,11 +2,33 @@ using dvtui.Models;
 using dvtui.Views;
 
 var mode = args.FirstOrDefault() ?? "normal";
+
+if( mode == "startup" )
+{
+    var connected = StartupScreen.Show(
+        "https://example.com",
+        async (_, cancellationToken) =>
+        {
+            await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+        }
+    );
+    Console.WriteLine($"Startup exited; connected: {connected}");
+    return;
+}
+
 var attempts = 0;
 EntityBrowserScreen.Show(async cancellationToken =>
 {
     attempts++;
-    await Task.Delay(mode == "cancel" ? 10000 : 350, cancellationToken);
+    if( mode == "uncooperative" )
+    {
+        await Task.Delay(Timeout.InfiniteTimeSpan);
+    }
+    else
+    {
+        await Task.Delay(mode == "cancel" ? 10000 : 350, cancellationToken);
+    }
+
     if (mode == "retry" && attempts == 1)
     {
         throw new Exception("Simulated [metadata] error");

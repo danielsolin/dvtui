@@ -20,3 +20,5 @@ runner drives the real browser in a pseudo-terminal and checks:
 
 This is an integration test runner, invoked with Python rather than
 `dotnet test`. It does not connect to a real Dataverse environment.
+The runner disables persistent .NET build servers and cleans up each PTY
+process group when a test finishes or the runner exits.
