@@ -48,7 +48,7 @@ dotnet run -- "https://example.crm.dynamics.com"
 Run `dotnet build` after changes. Run terminal integration tests with:
 
 ```text
-python3 tests/test_entity_browser.py
+python3 tests/run_tui_tests.py
 ```
 
 See `tests/README.md` for requirements and coverage.

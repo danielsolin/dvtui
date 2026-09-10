@@ -3,14 +3,14 @@
 Run from the repository root:
 
 ```sh
-python3 tests/test_entity_browser.py
+python3 tests/run_tui_tests.py
 ```
 
 Requires .NET 10, Python 3, and Linux or WSL. No Python packages or Dataverse
 credentials are needed. The runner builds the test host automatically.
 
 The host references the application and supplies simulated metadata. The
-runner drives the real browser in a pseudo-terminal and checks:
+runner drives the real TUI in a pseudo-terminal and checks:
 
 - Customizable filtering and the 25/75 layout.
 - Selection, paging, detail scrolling, and terminal resizing.

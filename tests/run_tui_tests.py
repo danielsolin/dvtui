@@ -1,3 +1,5 @@
+"""Run the TUI integration tests through a pseudo-terminal."""
+
 import atexit
 import fcntl
 import os
