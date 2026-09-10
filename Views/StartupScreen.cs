@@ -7,10 +7,13 @@ internal sealed class StartupScreen
 {
     private const string ApplicationName = "dvtui";
     private const int RefreshIntervalMilliseconds = 80;
+    private const int ConnectionRefreshIntervalMilliseconds = 250;
+    private const int ConnectionShutdownTimeoutMilliseconds = 2000;
     private const int FormWidth = 60;
     private readonly UrlTextBox _url;
-    private string _message = "Enter: connect | Esc: quit";
+    private string _message = "Enter: connect | Q: quit";
     private Task? _connection;
+    private CancellationTokenSource? _connectionCancellation;
     private int _frame;
 
     private StartupScreen(string initialUrl)
@@ -18,14 +21,17 @@ internal sealed class StartupScreen
         _url = new UrlTextBox(initialUrl);
     }
 
-    public static bool Show(string initialUrl, Action<string> connect)
+    public static bool Show(
+        string initialUrl,
+        Func<string, CancellationToken, Task> connect
+    )
     {
         if( Console.IsInputRedirected || Console.IsOutputRedirected )
         {
             var url = string.IsNullOrWhiteSpace(initialUrl)
                 ? AnsiConsole.Ask<string>("Enter Dataverse URL:")
                 : initialUrl;
-            connect(url);
+            connect(url, CancellationToken.None).GetAwaiter().GetResult();
             return true;
         }
 
@@ -33,27 +39,37 @@ internal sealed class StartupScreen
         var connected = false;
         var previousControlCMode = Console.TreatControlCAsInput;
 
-        AnsiConsole.AlternateScreen(() =>
+        try
         {
-            Console.TreatControlCAsInput = true;
-            AnsiConsole.Clear();
+            AnsiConsole.AlternateScreen(() =>
+            {
+                Console.TreatControlCAsInput = true;
+                AnsiConsole.Clear();
 
-            try
-            {
-                connected = AnsiConsole.Live(screen.Render())
-                    .Start(context => screen.Run(context, connect));
-            }
-            finally
-            {
-                AnsiConsole.Cursor.Show();
-                Console.TreatControlCAsInput = previousControlCMode;
-            }
-        });
+                try
+                {
+                    connected = AnsiConsole.Live(screen.Render())
+                        .Start(context => screen.Run(context, connect));
+                }
+                finally
+                {
+                    AnsiConsole.Cursor.Show();
+                    Console.TreatControlCAsInput = previousControlCMode;
+                }
+            });
+        }
+        finally
+        {
+            screen.StopConnection();
+        }
 
         return connected;
     }
 
-    private bool Run(LiveDisplayContext context, Action<string> connect)
+    private bool Run(
+        LiveDisplayContext context,
+        Func<string, CancellationToken, Task> connect
+    )
     {
         var lastSize = (Width: 0, Height: 0);
         while( true )
@@ -69,7 +85,7 @@ internal sealed class StartupScreen
                 catch( Exception ex )
                 {
                     _message = $"Connection failed: {ex.Message}";
-                    _connection = null;
+                    ReleaseConnection();
                     refresh = true;
                 }
             }
@@ -77,14 +93,15 @@ internal sealed class StartupScreen
             while( Console.KeyAvailable )
             {
                 var key = Console.ReadKey(intercept: true);
+                if( key.Key == ConsoleKey.Q || key.KeyChar == '\u0003' )
+                {
+                    _connectionCancellation?.Cancel();
+                    return false;
+                }
+
                 if( _connection != null )
                 {
                     continue;
-                }
-
-                if( key.Key == ConsoleKey.Escape || key.KeyChar == '\u0003' )
-                {
-                    return false;
                 }
 
                 if( key.Key == ConsoleKey.Enter )
@@ -106,11 +123,14 @@ internal sealed class StartupScreen
                 lastSize = size;
             }
 
-            Thread.Sleep(RefreshIntervalMilliseconds);
+            var delay = _connection == null
+                ? RefreshIntervalMilliseconds
+                : ConnectionRefreshIntervalMilliseconds;
+            Thread.Sleep(delay);
         }
     }
 
-    private void StartConnection(Action<string> connect)
+    private void StartConnection(Func<string, CancellationToken, Task> connect)
     {
         var url = _url.Value.Trim();
         if( !url.Contains("://", StringComparison.Ordinal) )
@@ -127,7 +147,62 @@ internal sealed class StartupScreen
             return;
         }
 
-        _connection = Task.Run(() => connect(uri.AbsoluteUri));
+        var connectionCancellation = new CancellationTokenSource();
+        _connectionCancellation = connectionCancellation;
+        _connection = Task.Run(
+            () => connect(uri.AbsoluteUri, connectionCancellation.Token),
+            connectionCancellation.Token
+        );
+    }
+
+    private void ReleaseConnection()
+    {
+        _connection = null;
+        _connectionCancellation?.Dispose();
+        _connectionCancellation = null;
+    }
+
+    private void StopConnection()
+    {
+        var connection = _connection;
+        _connectionCancellation?.Cancel();
+        if( connection == null )
+        {
+            return;
+        }
+
+        try
+        {
+            if( !connection.Wait(
+                TimeSpan.FromMilliseconds(ConnectionShutdownTimeoutMilliseconds)
+            ))
+            {
+                ObserveFaults(connection);
+                return;
+            }
+        }
+        catch( AggregateException )
+        {
+        }
+        finally
+        {
+            if( connection.IsCompleted )
+            {
+                _connectionCancellation?.Dispose();
+                _connectionCancellation = null;
+            }
+        }
+    }
+
+    private static void ObserveFaults(Task task)
+    {
+        _ = task.ContinueWith(
+            completed => _ = completed.Exception,
+            CancellationToken.None,
+            TaskContinuationOptions.OnlyOnFaulted
+                | TaskContinuationOptions.ExecuteSynchronously,
+            TaskScheduler.Default
+        );
     }
 
     private IRenderable Render()

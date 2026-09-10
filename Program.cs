@@ -16,18 +16,26 @@ internal static class Program
         {
             var connected = StartupScreen.Show(
                 GetEnvUrl(args),
-                url =>
+                async (url, cancellationToken) =>
                 {
                     var candidate = new DataverseService(url);
+                    var assigned = false;
                     try
                     {
-                        candidate.Connect();
+                        await Task.Run(
+                            candidate.Connect,
+                            cancellationToken
+                        );
+                        cancellationToken.ThrowIfCancellationRequested();
                         service = candidate;
+                        assigned = true;
                     }
-                    catch
+                    finally
                     {
-                        candidate.Dispose();
-                        throw;
+                        if( !assigned )
+                        {
+                            candidate.Dispose();
+                        }
                     }
                 }
             );

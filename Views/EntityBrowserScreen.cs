@@ -12,6 +12,7 @@ internal sealed class EntityBrowserScreen
     private const int MinimumHeight = 10;
     private const int SidebarWidthDivisor = 4;
     private const int PanelHorizontalOverhead = 4;
+    private const int ShutdownTimeoutMilliseconds = 2000;
     private readonly Func<CancellationToken, Task<List<DataverseEntity>>> _load;
     private readonly Func<string, CancellationToken, Task<DataverseEntityDetails>>
         _loadDetails;
@@ -20,6 +21,7 @@ internal sealed class EntityBrowserScreen
     private string _status = "Loading tables...";
     private string? _detailsRequest;
     private Task<DataverseEntityDetails>? _pendingDetails;
+    private CancellationTokenSource? _detailsCancellation;
     private int _selected;
     private int _firstVisible;
     private bool _detailsFocused;
@@ -84,7 +86,10 @@ internal sealed class EntityBrowserScreen
 
                 if( _pendingDetails != null && _pendingDetails.IsCompleted )
                 {
-                    await CompleteDetailsLoadAsync(_pendingDetails);
+                    await CompleteDetailsLoadAsync(
+                        _pendingDetails,
+                        cancellation.Token
+                    );
                     _pendingDetails = null;
                     refresh = true;
                 }
@@ -92,7 +97,7 @@ internal sealed class EntityBrowserScreen
                 while( Console.KeyAvailable )
                 {
                     var key = Console.ReadKey(intercept: true);
-                    if( key.Key == ConsoleKey.Escape || key.KeyChar == '\u0003' )
+                    if( key.Key == ConsoleKey.Q || key.KeyChar == '\u0003' )
                     {
                         return;
                     }
@@ -122,14 +127,31 @@ internal sealed class EntityBrowserScreen
         finally
         {
             await cancellation.CancelAsync();
+            _detailsCancellation?.Cancel();
             if( pendingLoad != null )
             {
-                await CompleteLoadAsync(pendingLoad, cancellation.Token);
+                await WaitForCleanupAsync(
+                    CompleteLoadAsync(pendingLoad, cancellation.Token)
+                );
             }
             if( _pendingDetails != null )
             {
-                await CompleteDetailsLoadAsync(_pendingDetails);
+                await WaitForCleanupAsync(
+                    CompleteDetailsLoadAsync(
+                        _pendingDetails,
+                        cancellation.Token
+                    )
+                );
             }
+        }
+    }
+
+    private static async Task WaitForCleanupAsync(Task cleanup)
+    {
+        var timeout = Task.Delay(ShutdownTimeoutMilliseconds);
+        if( await Task.WhenAny(cleanup, timeout) == cleanup )
+        {
+            await cleanup;
         }
     }
 
@@ -166,12 +188,18 @@ internal sealed class EntityBrowserScreen
     }
 
     private async Task CompleteDetailsLoadAsync(
-        Task<DataverseEntityDetails> pendingDetails
+        Task<DataverseEntityDetails> pendingDetails,
+        CancellationToken cancellationToken
     )
     {
         try
         {
             var details = await pendingDetails;
+            if( cancellationToken.IsCancellationRequested )
+            {
+                return;
+            }
+
             if( _entities.Count == 0
                 || _detailsRequest != _entities[_selected].LogicalName )
             {
@@ -234,6 +262,7 @@ internal sealed class EntityBrowserScreen
 
     private void SelectEntity(CancellationToken cancellationToken)
     {
+        _detailsCancellation?.Cancel();
         if( _entities.Count == 0 )
         {
             _details = null;
@@ -245,9 +274,12 @@ internal sealed class EntityBrowserScreen
         var entity = _entities[_selected];
         _detailsRequest = entity.LogicalName;
         _details = new ScrollableContent(new Text("Loading fields..."));
-        _pendingDetails = Task.Run(
-            () => _loadDetails(entity.LogicalName, cancellationToken),
+        _detailsCancellation = CancellationTokenSource.CreateLinkedTokenSource(
             cancellationToken
+        );
+        _pendingDetails = Task.Run(
+            () => _loadDetails(entity.LogicalName, _detailsCancellation.Token),
+            _detailsCancellation.Token
         );
     }
 
@@ -262,7 +294,7 @@ internal sealed class EntityBrowserScreen
         var height = AnsiConsole.Profile.Height;
         if( width < MinimumWidth || height < MinimumHeight )
         {
-            return new Text("Enlarge the terminal (60 x 10). Esc: quit.");
+            return new Text("Enlarge the terminal (60 x 10). Q: quit.");
         }
 
         var sidebarWidth = width / SidebarWidthDivisor;
@@ -293,7 +325,7 @@ internal sealed class EntityBrowserScreen
                     new Layout().Update(details)
                 ),
                 new Layout().Size(1).Update(new Text(
-                    "↑↓: move | PgUp/PgDn | Tab: pane | R: reload | Esc: quit"
+                    "↑↓: move | PgUp/PgDn | Tab: pane | R: reload | Q: quit"
                 ))
             );
     }
