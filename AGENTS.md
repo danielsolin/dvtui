@@ -4,11 +4,6 @@
 
 The name of this project is 'dvtui'. That is, in lowercase letters only.
 
-dvtui is for fun and learning. Only produce code or edit files after first
-discussing it with the operator. Do not change anything that the operator did
-not ask for. If further changes are required to finish a task, stop and ask how
-to proceed.
-
 ## Project Structure
 
 dvtui is a small .NET console application built around a terminal user
