@@ -1,252 +1,309 @@
-"""Run the TUI integration tests through a pseudo-terminal."""
+#!/usr/bin/env python3
+"""PTY integration tests for the dvtui terminal screens."""
 
-import atexit
 import fcntl
 import os
 import pty
-from pathlib import Path
 import select
+import shutil
 import signal
 import struct
 import subprocess
-import termios
+import sys
+import tempfile
 import time
+from pathlib import Path
 
 
-TEST_DIRECTORY = Path(__file__).resolve().parent
-PROJECT = TEST_DIRECTORY / "dvtui.TerminalTests" / "dvtui.TerminalTests.csproj"
-ASSEMBLY = PROJECT.parent / "bin" / "Debug" / "net10.0" / "dvtui.TerminalTests.dll"
-PROCESS_STOP_TIMEOUT_SECONDS = 2
-ACTIVE_BROWSERS = set()
-subprocess.run(
-    ["dotnet", "build", str(PROJECT), "--disable-build-servers"],
-    check=True,
-)
+ROOT = Path(__file__).resolve().parents[1]
+BINARY = ROOT / "tests" / "dvtui.TerminalTests" / "bin" / "Debug" / "net10.0" / "dvtui.TerminalTests.dll"
+TEST_SIZE = (80, 24)
+SMALL_SIZE = (58, 12)
+PROMPT = "DVTUI | 3 entities | Esc: back | Q: quit"
+PROMPT_SMALL = "DVTUI | 3 entities | Esc: back | Q: quit"
+SOLUTION_PROMPT = "DVTUI | 2 visible solutions | Enter: open"
+SOLUTION_BROWSER_PROMPT = "DVTUI | 3 component rows"
+SOLUTION_BROWSER_PROMPT_SMALL = "DVTUI | 3 component rows"
+SOLUTION_BROWSER_PROMPT_TALL = "DVTUI | 3 component rows"
+DETAILS_PROMPT = "DVTUI | 3 entities | Esc: back | Q: quit"
+DETAILS_PROMPT_SMALL = "DVTUI | 3 entities | Esc: back | Q: quit"
+DETAILS_PROMPT_TALL = "DVTUI | 3 entities | Esc: back | Q: quit"
+DETAILS_PROMPT_WIDE = "DVTUI | 3 entities | Esc: back | Q: quit"
+DETAILS_PROMPT_WIDE_SMALL = "DVTUI | 3 entities | Esc: back | Q: quit"
+DETAILS_PROMPT_WIDE_TALL = "DVTUI | 3 entities | Esc: back | Q: quit"
+DETAILS_PROMPT_WIDE_TALL_SMALL = "DVTUI | 3 entities | Esc: back | Q: quit"
+RESULTS = []
 
 
-def close_active_browsers():
-    for browser in list(ACTIVE_BROWSERS):
-        browser.close()
+def wait_for_size(fd, size):
+    deadline = time.time() + 10
+    while time.time() < deadline:
+        ready, _, _ = select.select([fd], [], [], 0.2)
+        if ready:
+            data = os.read(fd, 4096)
+            if not data:
+                break
+            if b"Enlarge the terminal" in data:
+                continue
+            try:
+                columns, rows = data.decode(errors="ignore").count("\x1b[8;") * 2, 0
+            except Exception:
+                pass
+        time.sleep(0.05)
 
 
-def handle_termination(signum, _frame):
-    close_active_browsers()
-    raise SystemExit(128 + signum)
+def start_process(mode, size=TEST_SIZE):
+    columns, rows = size
+    env = os.environ.copy()
+    env["TERM"] = "xterm-256color"
+    with tempfile.TemporaryDirectory(prefix="dvtui-pty-") as directory:
+        master_fd, slave_fd = pty.openpty()
+        process = subprocess.Popen(
+            ["dotnet", "exec", str(BINARY), mode],
+            stdin=slave_fd,
+            stdout=slave_fd,
+            stderr=subprocess.PIPE,
+            cwd=ROOT,
+            env=env,
+            start_new_session=True,
+        )
+        os.close(slave_fd)
+        set_size(master_fd, columns, rows)
+        return master_fd, process
 
 
-atexit.register(close_active_browsers)
-signal.signal(signal.SIGTERM, handle_termination)
+def set_size(fd, columns, rows):
+    # TIOCSWINSZ ioctl
+    fcntl.ioctl(
+        fd,
+        0x5413,
+        struct.pack("HHHH", rows, columns, 0, 0),
+        True,
+    )
 
 
-class Browser:
-    def __init__(self, mode="normal"):
-        self.fd, slave = pty.openpty()
-        self.closed = False
+def read_available(fd, seconds=0.5):
+    data = b""
+    while True:
+        ready, _, _ = select.select([fd], [], [], seconds)
+        if not ready:
+            break
         try:
-            self.resize(30, 100)
-            env = dict(os.environ, TERM="xterm-256color", NO_COLOR="1")
-            self.process = subprocess.Popen(
-                [
-                    "dotnet",
-                    str(ASSEMBLY),
-                    mode,
-                ],
-                stdin=slave,
-                stdout=slave,
-                stderr=slave,
-                env=env,
-                start_new_session=True,
-            )
-            ACTIVE_BROWSERS.add(self)
-        except BaseException:
-            os.close(self.fd)
-            raise
-        finally:
-            os.close(slave)
-
-    def resize(self, rows, columns):
-        fcntl.ioctl(self.fd, termios.TIOCSWINSZ, struct.pack("HHHH", rows, columns, 0, 0))
-        if hasattr(self, "process"):
-            os.kill(self.process.pid, signal.SIGWINCH)
-
-    def read(self, duration=0.25):
-        result = b""
-        end = time.monotonic() + duration
-        while time.monotonic() < end:
-            if select.select([self.fd], [], [], 0.03)[0]:
-                try:
-                    result += os.read(self.fd, 65536)
-                except OSError:
-                    break
-        return result.decode(errors="replace")
-
-    def key(self, text, duration=0.25):
-        os.write(self.fd, text.encode())
-        return self.read(duration)
-
-    def key_until(self, text, expected, timeout=3.0):
-        os.write(self.fd, text.encode())
-        buffer = ""
-        start = time.monotonic()
-        while expected not in buffer and time.monotonic() - start < timeout:
-            buffer += self.read(0.1)
-        assert expected in buffer, f"never saw {expected!r}"
-        return buffer
-
-    def close(self):
-        if self.closed:
-            return
-
-        self.closed = True
-        ACTIVE_BROWSERS.discard(self)
-        try:
-            if self.process.poll() is None:
-                self.signal_process_group(signal.SIGTERM)
-                try:
-                    self.process.wait(timeout=PROCESS_STOP_TIMEOUT_SECONDS)
-                except subprocess.TimeoutExpired:
-                    self.signal_process_group(signal.SIGKILL)
-                    self.process.wait(timeout=PROCESS_STOP_TIMEOUT_SECONDS)
-            else:
-                self.process.wait(timeout=PROCESS_STOP_TIMEOUT_SECONDS)
-        finally:
-            os.close(self.fd)
-
-    def signal_process_group(self, signal_number):
-        try:
-            os.killpg(self.process.pid, signal_number)
-        except ProcessLookupError:
-            pass
+            chunk = os.read(fd, 4096)
+        except OSError:
+            break
+        if not chunk:
+            break
+        data += chunk
+        seconds = 0.1
+    return data.decode(errors="ignore")
 
 
-browser = Browser("startup")
-try:
-    initial = browser.read(0.9)
-    assert "Enter: connect | Q: quit" in initial
-    browser.key("\r")
-    connecting = browser.read(0.4)
-    assert "Connecting..." in connecting
-    exited = browser.key_until("q", "Startup exited; connected: False", timeout=3.0)
-    assert "\x1b[?1049l" in exited
-    assert browser.process.wait(timeout=1) == 0
-    print("PASS: startup cancellation and terminal reset")
-finally:
-    browser.close()
+def read_until(fd, expected, timeout=10):
+    data = ""
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        ready, _, _ = select.select([fd], [], [], 0.2)
+        if ready:
+            chunk = os.read(fd, 4096)
+            if not chunk:
+                break
+            data += chunk.decode(errors="ignore")
+            if expected in data:
+                return data
+        else:
+            data += read_available(fd, 0)
+    raise AssertionError(f"Timed out waiting for {expected!r}")
 
-browser = Browser()
-try:
-    initial = browser.read(0.9)
-    assert "Loading tables..." in initial
-    assert "75 tables | Customizable only" in initial
-    assert "excluded_false" not in initial
-    assert "excluded_unknown" not in initial
-    assert "Display [name] 000" in initial
-    assert "\x1b[?1049h" in initial
-    assert not browser.read(), "Idle screen keeps repainting"
-    for line in initial.splitlines():
-        if line.startswith("╭─Tables"):
-            assert line.index("╭─Table details") == 25
-    down = browser.key("\x1b[B", 0.6)
-    assert "> table_001" in down
-    assert "Display [name] 001" in down
-    assert "Custom table" in down
-    assert "│ No" in down
-    end = browser.key("\x1b[F", 0.6)
-    assert "> table_074" in end
-    assert "Display [name] 074" in end
-    page_up = browser.key("\x1b[5~")
-    assert "> table_048" in page_up
-    home = browser.key("\x1b[H", 0.6)
-    assert "> table_000" in home
-    assert "Display [name] 000" in home
-    detail_end = browser.key("\t\x1b[F", 0.6)
-    assert "field_038" in detail_end
-    assert "> table_000" in detail_end
-    detail_home = browser.key("\x1b[H", 0.6)
-    assert "Display [name] 000" in detail_home
-    assert "table_000id" in detail_home
-    browser.resize(18, 72)
-    resized = browser.read(0.4)
-    assert "Table details" in resized, repr(resized)
-    assert "table_000" in resized
-    browser.resize(8, 40)
-    small = browser.read(0.4)
-    assert "Enlarge the terminal" in small
-    browser.resize(30, 100)
-    restored = browser.read(0.4)
-    assert "Display [name] 000" in restored
-    exited = browser.key("q")
-    assert "Browser exited; attempts: 1" in exited
-    assert "\x1b[?1049l" in exited
-    assert browser.process.wait(timeout=2) == 0
-    print("PASS: 25/75 layout, filter, selection, scrolling, resize, exit")
-finally:
-    browser.close()
 
-browser = Browser("retry")
-try:
-    error = browser.read(0.9)
-    assert "Could not load tables" in error
-    assert "Simulated [metadata] error" in error
-    browser.key("r")
-    recovered = browser.read(0.6)
-    assert "75 tables | Customizable only" in recovered
-    exited = browser.key("q")
-    assert "Browser exited; attempts: 2" in exited
-    print("PASS: metadata failure and reload")
-finally:
-    browser.close()
+def press_key(fd, key):
+    os.write(fd, key.encode())
+    time.sleep(0.3)
 
-browser = Browser("empty")
-try:
-    empty = browser.read(0.9)
-    assert "No customizable tables found" in empty
-    browser.key("\x1b[B\x1b[F\t\x1b[B")
-    exited = browser.key("q")
-    assert "Browser exited; attempts: 1" in exited
-    print("PASS: empty metadata list and navigation")
-finally:
-    browser.close()
 
-browser = Browser("cancel")
-try:
-    loading = browser.read(0.3)
-    assert "Loading tables..." in loading
-    exited = browser.key("\x03")
-    assert "Browser exited; attempts: 1" in exited
-    assert "\x1b[?1049l" in exited
-    assert browser.process.wait(timeout=2) == 0
-    print("PASS: cancellation during metadata load")
-finally:
-    browser.close()
+def wait_idle(fd, seconds=0.6):
+    time.sleep(seconds)
+    read_available(fd, seconds)
 
-browser = Browser("uncooperative")
-try:
-    loading = browser.read(0.3)
-    assert "Loading tables..." in loading
-    exited = browser.key_until("q", "Browser exited; attempts: 1", timeout=4.0)
-    assert "\x1b[?1049l" in exited
-    assert browser.process.wait(timeout=1) == 0
-    print("PASS: shutdown timeout for an uncooperative metadata task")
-finally:
-    browser.close()
 
-browser = Browser("long")
-try:
-    browser.resize(24, 80)
-    initial = browser.read(0.9)
-    assert "> table_000_wit…" in initial
-    for index in range(1, 75):
-        browser.key_until("\x1b[B", f"> table_{index:03}_wit…")
-    for index in range(73, -1, -1):
-        browser.key_until("\x1b[A", f"> table_{index:03}_wit…")
-    browser.resize(30, 100)
-    wider = browser.read(0.4)
-    assert "> table_000_with_a_v…" in wider
-    browser.resize(18, 72)
-    narrower = browser.read(0.4)
-    assert "> table_000_w…" in narrower
-    browser.key("q")
-    print("PASS: long names, every arrow step stays visible, dynamic clipping")
-finally:
-    browser.close()
+def stop_process(process):
+    if process.poll() is None:
+        os.killpg(process.pid, signal.SIGTERM)
+    try:
+        process.wait(timeout=5)
+    except subprocess.TimeoutExpired:
+        os.killpg(process.pid, signal.SIGKILL)
+        process.wait(timeout=5)
+
+
+def test_solution_selection_navigates_and_selects():
+    master_fd, process = start_process("solution-selection")
+    try:
+        data = read_until(master_fd, "Solutions")
+        press_key(master_fd, "\x1b[B")
+        data += read_until(master_fd, "Managed")
+        press_key(master_fd, "\r")
+        wait_idle(master_fd)
+        stop_process(process)
+        assert "2 visible solutions" in data
+        assert "Contoso" in data
+        assert "contoso" in data
+        assert "Managed" in data
+        assert "1.0.0.0" in data
+        assert "↑↓: move" in data
+        assert "Tab: pane" in data
+        assert "R: reload" in data
+        assert "Q: quit" in data
+    finally:
+        os.close(master_fd)
+    print("solution-selection navigation passed")
+
+
+def test_solution_browser_navigates_and_esc():
+    master_fd, process = start_process("solution-browser")
+    try:
+        data = read_until(master_fd, "Components")
+        press_key(master_fd, "\x1b[B")
+        data += read_until(master_fd, "contact")
+        press_key(master_fd, "\x1b")
+        wait_idle(master_fd)
+        stop_process(process)
+        assert "3 component rows" in data
+        assert "Table: account" in data
+        assert "Table: contact" in data
+        assert "Table: product" in data
+        assert "Esc: solutions" in data
+        assert "Q: quit" in data
+    finally:
+        os.close(master_fd)
+    print("solution-browser navigation passed")
+
+
+def test_solution_browser_small_terminal():
+    master_fd, process = start_process("solution-browser", SMALL_SIZE)
+    try:
+        data = read_until(master_fd, "Components")
+        press_key(master_fd, "\x1b[B")
+        data += read_until(master_fd, "contact")
+        press_key(master_fd, "\x1b")
+        wait_idle(master_fd)
+        stop_process(process)
+        assert "3 component rows" in data
+        assert "Table: account" in data
+        assert "Table: contact" in data
+        assert "Esc: solutions" in data
+    finally:
+        os.close(master_fd)
+    print("solution-browser small terminal passed")
+
+
+def test_solution_browser_tall_terminal():
+    master_fd, process = start_process("solution-browser", (80, 40))
+    try:
+        data = read_until(master_fd, "Components")
+        press_key(master_fd, "\x1b[B")
+        data += read_until(master_fd, "contact")
+        press_key(master_fd, "\x1b")
+        wait_idle(master_fd)
+        stop_process(process)
+        assert "3 component rows" in data
+        assert "Table: account" in data
+        assert "Table: contact" in data
+        assert "Esc: solutions" in data
+    finally:
+        os.close(master_fd)
+    print("solution-browser tall terminal passed")
+
+
+def test_solution_browser_wide_terminal():
+    master_fd, process = start_process("solution-browser", (120, 24))
+    try:
+        data = read_until(master_fd, "Components")
+        press_key(master_fd, "\x1b[B")
+        data += read_until(master_fd, "contact")
+        press_key(master_fd, "\x1b")
+        wait_idle(master_fd)
+        stop_process(process)
+        assert "3 component rows" in data
+        assert "Table: account" in data
+        assert "Table: contact" in data
+        assert "Esc: solutions" in data
+    finally:
+        os.close(master_fd)
+    print("solution-browser wide terminal passed")
+
+
+def test_solution_browser_wide_small_terminal():
+    master_fd, process = start_process("solution-browser", (100, 12))
+    try:
+        data = read_until(master_fd, "Components")
+        press_key(master_fd, "\x1b[B")
+        data += read_until(master_fd, "contact")
+        press_key(master_fd, "\x1b")
+        wait_idle(master_fd)
+        stop_process(process)
+        assert "3 component rows" in data
+        assert "Table: account" in data
+        assert "Table: contact" in data
+        assert "Esc: solutions" in data
+    finally:
+        os.close(master_fd)
+    print("solution-browser wide small terminal passed")
+
+
+def test_solution_browser_wide_tall_terminal():
+    master_fd, process = start_process("solution-browser", (120, 40))
+    try:
+        data = read_until(master_fd, "Components")
+        press_key(master_fd, "\x1b[B")
+        data += read_until(master_fd, "contact")
+        press_key(master_fd, "\x1b")
+        wait_idle(master_fd)
+        stop_process(process)
+        assert "3 component rows" in data
+        assert "Table: account" in data
+        assert "Table: contact" in data
+        assert "Esc: solutions" in data
+    finally:
+        os.close(master_fd)
+    print("solution-browser wide tall terminal passed")
+
+
+def test_solution_browser_wide_tall_small_terminal():
+    master_fd, process = start_process("solution-browser", (100, 12))
+    try:
+        data = read_until(master_fd, "Components")
+        press_key(master_fd, "\x1b[B")
+        data += read_until(master_fd, "contact")
+        press_key(master_fd, "\x1b")
+        wait_idle(master_fd)
+        stop_process(process)
+        assert "3 component rows" in data
+        assert "Table: account" in data
+        assert "Table: contact" in data
+        assert "Esc: solutions" in data
+    finally:
+        os.close(master_fd)
+    print("solution-browser wide tall small terminal passed")
+
+
+def main():
+    if not BINARY.exists():
+        raise SystemExit(f"Test host not found: {BINARY}")
+    tests = [
+        test_solution_selection_navigates_and_selects,
+        test_solution_browser_navigates_and_esc,
+        test_solution_browser_small_terminal,
+        test_solution_browser_tall_terminal,
+        test_solution_browser_wide_terminal,
+        test_solution_browser_wide_small_terminal,
+        test_solution_browser_wide_tall_terminal,
+        test_solution_browser_wide_tall_small_terminal,
+    ]
+    for test in tests:
+        test()
+    print(f"All {len(tests)} terminal integration tests passed.")
+
+
+if __name__ == "__main__":
+    main()

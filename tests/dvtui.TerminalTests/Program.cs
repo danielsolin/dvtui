@@ -1,99 +1,125 @@
 using dvtui.Models;
 using dvtui.Views;
 
-var mode = args.FirstOrDefault() ?? "normal";
-
-if( mode == "startup" )
+var mode = args.FirstOrDefault() ?? "solution-selection";
+var entity = new DataverseEntity
 {
-    var connected = StartupScreen.Show(
-        "https://example.com",
-        async (_, cancellationToken) =>
+    MetadataId = Guid.Parse("00000000-0000-0000-0000-000000000001"),
+    LogicalName = "account",
+    DisplayName = "Accounts",
+    Description = "Customer accounts"
+};
+var contact = new DataverseEntity
+{
+    MetadataId = Guid.Parse("00000000-0000-0000-0000-000000000002"),
+    LogicalName = "contact",
+    DisplayName = "Contacts",
+    Description = "Customer contacts"
+};
+var product = new DataverseEntity
+{
+    MetadataId = Guid.Parse("00000000-0000-0000-0000-000000000003"),
+    LogicalName = "product",
+    DisplayName = "Products",
+    Description = "Catalog products"
+};
+var entities = new List<DataverseEntity>
+{
+    entity,
+    contact,
+    product
+};
+var solution = new DataverseSolution
+{
+    Id = Guid.Parse("00000000-0000-0000-0000-00000000000a"),
+    FriendlyName = "Contoso",
+    UniqueName = "contoso",
+    Version = "1.0.0.0",
+    IsManaged = false,
+    Description = "Contoso baseline solution"
+};
+var components = new List<DataverseSolutionComponent>
+{
+    new()
+    {
+        Id = Guid.Parse("00000000-0000-0000-0000-00000000000b"),
+        ObjectId = entity.MetadataId,
+        ComponentType = SolutionComponentTypes.Entity,
+        RootComponentId = entity.MetadataId,
+        RootComponentBehavior = RootComponentBehaviors.IncludeSubcomponents,
+        Entity = entity
+    },
+    new()
+    {
+        Id = Guid.Parse("00000000-0000-0000-0000-00000000000c"),
+        ObjectId = contact.MetadataId,
+        ComponentType = SolutionComponentTypes.Entity,
+        RootComponentId = contact.MetadataId,
+        RootComponentBehavior = RootComponentBehaviors.IncludeSubcomponents,
+        Entity = contact
+    },
+    new()
+    {
+        Id = Guid.Parse("00000000-0000-0000-0000-00000000000d"),
+        ObjectId = product.MetadataId,
+        ComponentType = SolutionComponentTypes.Entity,
+        RootComponentId = product.MetadataId,
+        RootComponentBehavior = RootComponentBehaviors.IncludeSubcomponents,
+        Entity = product
+    }
+};
+var fields = new List<DataverseField>
+{
+    new() { SchemaName = "accountid", DisplayName = "Account ID", Type = "accountid" },
+    new() { SchemaName = "name", DisplayName = "Name", Type = "string" },
+    new() { SchemaName = "new_note", DisplayName = "Note", Type = "memo" },
+    new() { SchemaName = "parentid", DisplayName = "Parent", Type = "lookup" }
+};
+
+if( mode == "solution-selection" )
+{
+    SolutionSelectionScreen.Show(
+        async token =>
         {
-            await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+            await Task.Delay(50, token);
+            return [
+                solution,
+                new DataverseSolution
+                {
+                    Id = Guid.Parse("00000000-0000-0000-0000-00000000000e"),
+                    FriendlyName = "Contoso managed",
+                    UniqueName = "contoso_managed",
+                    Version = "1.0.0.0",
+                    IsManaged = true,
+                    Description = "Managed copy"
+                }
+            ];
         }
     );
-    Console.WriteLine($"Startup exited; connected: {connected}");
     return;
 }
 
-var attempts = 0;
-EntityBrowserScreen.Show(async cancellationToken =>
+if( mode == "solution-browser" )
 {
-    attempts++;
-    if( mode == "uncooperative" )
-    {
-        await Task.Delay(Timeout.InfiniteTimeSpan);
-    }
-    else
-    {
-        await Task.Delay(mode == "cancel" ? 10000 : 350, cancellationToken);
-    }
-
-    if (mode == "retry" && attempts == 1)
-    {
-        throw new Exception("Simulated [metadata] error");
-    }
-
-    var entities = new List<DataverseEntity>();
-    if (mode == "empty")
-    {
-        return entities;
-    }
-
-    for (var index = 0; index < 75; index++)
-    {
-        entities.Add(new DataverseEntity
+    var result = SolutionBrowserScreen.Show(
+        solution,
+        (id, token) =>
         {
-            LogicalName = mode == "long"
-                ? $"table_{index:000}_with_a_very_long_logical_name"
-                : $"table_{index:000}",
-            DisplayName = $"Display [name] {index:000}",
-            SchemaName = $"Table{index:000}",
-            IsCustomizable = true,
-            IsCustom = index % 2 == 0,
-            PrimaryIdAttribute = $"table_{index:000}id",
-            Description = string.Join(
-                " ",
-                Enumerable.Repeat("Long description for scrolling.", 50)
-            ) + " DESCRIPTION_END"
-        });
-    }
-
-    entities.Add(new DataverseEntity
-    {
-        LogicalName = "excluded_false",
-        IsCustomizable = false
-    });
-    entities.Add(new DataverseEntity
-    {
-        LogicalName = "excluded_unknown"
-    });
-    return entities;
-}, (logicalName, _) =>
-{
-    var fields = new List<DataverseField>();
-    fields.Add(new DataverseField
-    {
-        SchemaName = logicalName + "id",
-        DisplayName = "Id",
-        Type = "UniqueIdentifier",
-        Description = "Primary key for " + logicalName + "."
-    });
-    for (var index = 0; index < 39; index++)
-    {
-        fields.Add(new DataverseField
+            token.ThrowIfCancellationRequested();
+            return Task.FromResult(components);
+        },
+        (logicalName, metadataId, token) =>
         {
-            SchemaName = $"field_{index:000}",
-            DisplayName = $"Field {index:000}",
-            Type = index % 3 == 0 ? "Lookup" : "String",
-            Description = $"Description for field {index:000}."
-        });
-    }
-
-    return Task.FromResult(new DataverseEntityDetails
-    {
-        Entity = new DataverseEntity { LogicalName = logicalName },
-        Fields = fields
-    });
-});
-Console.WriteLine($"Browser exited; attempts: {attempts}");
+            token.ThrowIfCancellationRequested();
+            return Task.FromResult(
+                new DataverseEntityDetails
+                {
+                    Entity = entities.First(item => item.MetadataId == metadataId),
+                    Fields = fields
+                }
+            );
+        }
+    );
+    Console.WriteLine(result);
+    return;
+}

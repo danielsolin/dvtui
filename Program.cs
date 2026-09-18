@@ -45,10 +45,7 @@ internal static class Program
                 return;
             }
 
-            EntityBrowserScreen.Show(
-                service.GetEntitiesAsync,
-                service.GetEntityAsync
-            );
+            RunSolutionLoop(service);
         }
         catch( Exception ex )
         {
@@ -59,6 +56,30 @@ internal static class Program
         finally
         {
             service?.Dispose();
+        }
+    }
+
+    private static void RunSolutionLoop(DataverseService service)
+    {
+        while( true )
+        {
+            var solution = SolutionSelectionScreen.Show(
+                service.GetSolutionsAsync
+            );
+            if( solution == null )
+            {
+                return;
+            }
+
+            var result = SolutionBrowserScreen.Show(
+                solution,
+                service.GetSolutionComponentsAsync,
+                service.GetEntityAsync
+            );
+            if( result == SolutionBrowserResult.Quit )
+            {
+                return;
+            }
         }
     }
 

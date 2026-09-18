@@ -5,7 +5,13 @@ using Spectre.Console.Rendering;
 
 namespace dvtui.Views;
 
-internal sealed class EntityBrowserScreen
+internal enum SolutionBrowserResult
+{
+    BackToSolutions,
+    Quit
+}
+
+internal sealed class SolutionBrowserScreen
 {
     private const int RefreshIntervalMilliseconds = 80;
     private const int MinimumWidth = 60;
@@ -13,41 +19,57 @@ internal sealed class EntityBrowserScreen
     private const int SidebarWidthDivisor = 4;
     private const int PanelHorizontalOverhead = 4;
     private const int ShutdownTimeoutMilliseconds = 2000;
-    private readonly Func<CancellationToken, Task<List<DataverseEntity>>> _load;
-    private readonly Func<string, CancellationToken, Task<DataverseEntityDetails>>
+    private readonly DataverseSolution _solution;
+    private readonly Func<CancellationToken, Task<List<DataverseSolutionComponent>>>
+        _load;
+    private readonly Func<string, Guid, CancellationToken, Task<DataverseEntityDetails>>
         _loadDetails;
-    private List<DataverseEntity> _entities = [];
+    private List<DataverseSolutionComponent> _components = [];
     private ScrollableContent? _details;
-    private string _status = "Loading tables...";
-    private string? _detailsRequest;
+    private string _status = "Loading components...";
+    private bool _loadFailed;
+    private int _generation;
+    private (int Generation, Guid ComponentId)? _detailsRequest;
     private Task<DataverseEntityDetails>? _pendingDetails;
     private CancellationTokenSource? _detailsCancellation;
+    private CancellationTokenSource? _loadCancellation;
     private int _selected;
     private int _firstVisible;
     private bool _detailsFocused;
 
-    private EntityBrowserScreen(
-        Func<CancellationToken, Task<List<DataverseEntity>>> load,
-        Func<string, CancellationToken, Task<DataverseEntityDetails>> loadDetails
+    private SolutionBrowserScreen(
+        DataverseSolution solution,
+        Func<CancellationToken, Task<List<DataverseSolutionComponent>>> load,
+        Func<string, Guid, CancellationToken, Task<DataverseEntityDetails>> loadDetails
     )
     {
+        _solution = solution;
         _load = load;
         _loadDetails = loadDetails;
     }
 
-    public static void Show(
-        Func<CancellationToken, Task<List<DataverseEntity>>> load,
-        Func<string, CancellationToken, Task<DataverseEntityDetails>> loadDetails
+    public static SolutionBrowserResult Show(
+        DataverseSolution solution,
+        Func<Guid, CancellationToken, Task<List<DataverseSolutionComponent>>>
+            load,
+        Func<string, Guid, CancellationToken, Task<DataverseEntityDetails>> loadDetails
     )
     {
         if( Console.IsInputRedirected || Console.IsOutputRedirected )
         {
-            AnsiConsole.WriteLine("The table browser needs a terminal.");
-            return;
+            AnsiConsole.WriteLine(
+                "The solution browser needs an interactive terminal."
+            );
+            return SolutionBrowserResult.Quit;
         }
 
-        var screen = new EntityBrowserScreen(load, loadDetails);
+        var screen = new SolutionBrowserScreen(
+            solution,
+            token => load(solution.Id, token),
+            loadDetails
+        );
         var previousControlCMode = Console.TreatControlCAsInput;
+        var result = new SolutionBrowserResult[1];
         AnsiConsole.AlternateScreen(() =>
         {
             Console.TreatControlCAsInput = true;
@@ -55,7 +77,7 @@ internal sealed class EntityBrowserScreen
             try
             {
                 AnsiConsole.Live(screen.Render())
-                    .StartAsync(screen.RunAsync)
+                    .StartAsync(context => screen.RunAsync(context, result))
                     .GetAwaiter()
                     .GetResult();
             }
@@ -65,9 +87,14 @@ internal sealed class EntityBrowserScreen
                 Console.TreatControlCAsInput = previousControlCMode;
             }
         });
+
+        return result[0];
     }
 
-    private async Task RunAsync(LiveDisplayContext context)
+    private async Task RunAsync(
+        LiveDisplayContext context,
+        SolutionBrowserResult[] result
+    )
     {
         using var cancellation = new CancellationTokenSource();
         var pendingLoad = StartLoad(cancellation.Token);
@@ -99,6 +126,13 @@ internal sealed class EntityBrowserScreen
                     var key = Console.ReadKey(intercept: true);
                     if( key.Key == ConsoleKey.Q || key.KeyChar == '\u0003' )
                     {
+                        result[0] = SolutionBrowserResult.Quit;
+                        return;
+                    }
+
+                    if( key.Key == ConsoleKey.Escape )
+                    {
+                        result[0] = SolutionBrowserResult.BackToSolutions;
                         return;
                     }
 
@@ -155,34 +189,56 @@ internal sealed class EntityBrowserScreen
         }
     }
 
-    private Task<List<DataverseEntity>> StartLoad(CancellationToken cancellationToken)
+    private Task<List<DataverseSolutionComponent>> StartLoad(
+        CancellationToken cancellationToken
+    )
     {
-        _status = "Loading tables...";
-        return Task.Run(() => _load(cancellationToken), cancellationToken);
+        _generation++;
+        _status = "Loading components...";
+        _loadFailed = false;
+        _detailsCancellation?.Cancel();
+        _details = null;
+        _detailsRequest = null;
+        _pendingDetails = null;
+        _loadCancellation?.Dispose();
+        _loadCancellation = CancellationTokenSource.CreateLinkedTokenSource(
+            cancellationToken
+        );
+        return Task.Run(
+            () => _load(_loadCancellation!.Token),
+            _loadCancellation.Token
+        );
     }
 
     private async Task CompleteLoadAsync(
-        Task<List<DataverseEntity>> pendingLoad,
+        Task<List<DataverseSolutionComponent>> pendingLoad,
         CancellationToken cancellationToken
     )
     {
         try
         {
-            var entities = await pendingLoad;
-            _entities = entities.Where(entity => entity.IsCustomizable == true).ToList();
+            var components = await pendingLoad;
+            _components = components
+                .OrderBy(component => component.ComponentType)
+                .ThenBy(component => GetSortName(component), StringComparer.Ordinal)
+                .ThenBy(component => component.Id)
+                .ToList();
             _selected = 0;
             _firstVisible = 0;
-            SelectEntity(cancellationToken);
-            _status = _entities.Count == 0
-                ? "No customizable tables found. R: reload."
-                : $"{_entities.Count} tables | Customizable only";
+            _loadFailed = false;
+            SelectComponent(cancellationToken);
+            _status = _components.Count == 0
+                ? "No components found in this solution. R: reload | Esc: solutions"
+                : $"{_components.Count} component rows";
         }
         catch( OperationCanceledException ) when( cancellationToken.IsCancellationRequested )
         {
         }
         catch( Exception ex )
         {
-            _status = "Could not load tables. Press R to retry.";
+            _loadFailed = true;
+            _components = [];
+            _status = "Could not load components. R: retry | Esc: solutions";
             _details = new ScrollableContent(new Text(ex.Message));
         }
     }
@@ -192,22 +248,17 @@ internal sealed class EntityBrowserScreen
         CancellationToken cancellationToken
     )
     {
+        var request = _detailsRequest;
         try
         {
             var details = await pendingDetails;
-            if( cancellationToken.IsCancellationRequested )
-            {
-                return;
-            }
-
-            if( _entities.Count == 0
-                || _detailsRequest != _entities[_selected].LogicalName )
+            if( !IsCurrentDetailsRequest(request) )
             {
                 return;
             }
 
             _details = new ScrollableContent(
-                EntityDetailsView.Create(_entities[_selected], details.Fields)
+                RenderComponentDetails(_components[_selected], details)
             );
         }
         catch( OperationCanceledException )
@@ -215,10 +266,26 @@ internal sealed class EntityBrowserScreen
         }
         catch( Exception ex )
         {
+            if( !IsCurrentDetailsRequest(request) )
+            {
+                return;
+            }
+
             _details = new ScrollableContent(
-                new Text($"Could not load fields: {ex.Message}")
+                new Text($"Could not load table details: {ex.Message}")
             );
         }
+    }
+
+    private bool IsCurrentDetailsRequest(
+        (int Generation, Guid ComponentId)? request
+    )
+    {
+        return request != null
+            && request.Value.Generation == _generation
+            && _components.Count > 0
+            && _selected < _components.Count
+            && request.Value.ComponentId == _components[_selected].Id;
     }
 
     private void HandleKey(ConsoleKeyInfo key, CancellationToken cancellationToken)
@@ -232,7 +299,7 @@ internal sealed class EntityBrowserScreen
         var current = _detailsFocused ? _details?.Offset ?? 0 : _selected;
         var last = _detailsFocused
             ? _details?.MaximumOffset ?? 0
-            : Math.Max(0, _entities.Count - 1);
+            : Math.Max(0, _components.Count - 1);
         var pageSize = GetPageSize();
         var next = key.Key switch
         {
@@ -249,21 +316,23 @@ internal sealed class EntityBrowserScreen
         {
             _details.Offset = Math.Clamp(next, 0, last);
         }
-        else if( _entities.Count > 0 )
+        else if( _components.Count > 0 )
         {
-            var selected = Math.Clamp(next, 0, _entities.Count - 1);
+            var selected = Math.Clamp(next, 0, _components.Count - 1);
             if( selected != _selected )
             {
                 _selected = selected;
-                SelectEntity(cancellationToken);
+                SelectComponent(cancellationToken);
             }
         }
     }
 
-    private void SelectEntity(CancellationToken cancellationToken)
+    private void SelectComponent(CancellationToken cancellationToken)
     {
         _detailsCancellation?.Cancel();
-        if( _entities.Count == 0 )
+        _detailsCancellation?.Dispose();
+        _detailsCancellation = null;
+        if( _components.Count == 0 )
         {
             _details = null;
             _detailsRequest = null;
@@ -271,14 +340,37 @@ internal sealed class EntityBrowserScreen
             return;
         }
 
-        var entity = _entities[_selected];
-        _detailsRequest = entity.LogicalName;
-        _details = new ScrollableContent(new Text("Loading fields..."));
+        var component = _components[_selected];
+        if( component.ComponentType != SolutionComponentTypes.Entity
+            || component.ObjectId == null )
+        {
+            _details = new ScrollableContent(
+                ComponentDetailsView.Create(component)
+            );
+            _detailsRequest = null;
+            _pendingDetails = null;
+            return;
+        }
+
+        var metadataId = component.ObjectId.Value;
+        var logicalName = component.Entity?.LogicalName ?? string.Empty;
+        if( string.IsNullOrWhiteSpace(logicalName) )
+        {
+            _details = new ScrollableContent(
+                ComponentDetailsView.Create(component)
+            );
+            _detailsRequest = null;
+            _pendingDetails = null;
+            return;
+        }
+
+        _detailsRequest = (_generation, component.Id);
+        _details = new ScrollableContent(new Text("Loading table details..."));
         _detailsCancellation = CancellationTokenSource.CreateLinkedTokenSource(
             cancellationToken
         );
         _pendingDetails = Task.Run(
-            () => _loadDetails(entity.LogicalName, _detailsCancellation.Token),
+            () => _loadDetails(logicalName, metadataId, _detailsCancellation!.Token),
             _detailsCancellation.Token
         );
     }
@@ -288,18 +380,32 @@ internal sealed class EntityBrowserScreen
         return Math.Max(1, AnsiConsole.Profile.Height - 4);
     }
 
+    private static string GetSortName(DataverseSolutionComponent component)
+    {
+        if( component.Entity != null )
+        {
+            return string.IsNullOrWhiteSpace(component.Entity.LogicalName)
+                ? component.Entity.DisplayName
+                : component.Entity.LogicalName;
+        }
+
+        return component.ObjectId?.ToString() ?? string.Empty;
+    }
+
     private IRenderable Render()
     {
         var width = AnsiConsole.Profile.Width;
         var height = AnsiConsole.Profile.Height;
         if( width < MinimumWidth || height < MinimumHeight )
         {
-            return new Text("Enlarge the terminal (60 x 10). Q: quit.");
+            return new Text(
+                "Enlarge the terminal (60 x 10). Q: quit | Esc: solutions."
+            );
         }
 
         var sidebarWidth = width / SidebarWidthDivisor;
-        var list = new Panel(RenderEntities(sidebarWidth - PanelHorizontalOverhead))
-            .Header("Tables")
+        var list = new Panel(RenderComponents(sidebarWidth - PanelHorizontalOverhead))
+            .Header("Components")
             .RoundedBorder()
             .BorderColor(_detailsFocused ? Color.Grey : Color.Grey58)
             .Expand();
@@ -310,8 +416,8 @@ internal sealed class EntityBrowserScreen
             _details.Height = GetPageSize();
         }
 
-        var details = new Panel(_details ?? (IRenderable)new Text(_status))
-            .Header("Table details")
+        var details = new Panel(RenderDetails())
+            .Header("Component details")
             .RoundedBorder()
             .BorderColor(_detailsFocused ? Color.Grey58 : Color.Grey)
             .Expand();
@@ -325,12 +431,36 @@ internal sealed class EntityBrowserScreen
                     new Layout().Update(details)
                 ),
                 new Layout().Size(1).Update(new Text(
-                    "↑↓: move | PgUp/PgDn | Tab: pane | R: reload | Q: quit"
+                    "↑↓: move | PgUp/PgDn | Tab: pane | R: reload | "
+                    + "Esc: solutions | Q: quit"
                 ))
             );
     }
 
-    private IRenderable RenderEntities(int width)
+    private IRenderable RenderDetails()
+    {
+        if( _details != null )
+        {
+            return _details;
+        }
+
+        if( _loadFailed )
+        {
+            return new Text(_status);
+        }
+
+        if( _components.Count > 0 && _selected < _components.Count )
+        {
+            var component = _components[_selected];
+            return component.Entity != null
+                ? new Text("Loading table details...")
+                : ComponentDetailsView.Create(component);
+        }
+
+        return new Text(_status);
+    }
+
+    private IRenderable RenderComponents(int width)
     {
         var pageSize = GetPageSize();
         _firstVisible = Math.Clamp(
@@ -340,7 +470,7 @@ internal sealed class EntityBrowserScreen
         );
         var rows = new List<IRenderable>();
         for( var index = _firstVisible;
-            index < Math.Min(_entities.Count, _firstVisible + pageSize);
+            index < Math.Min(_components.Count, _firstVisible + pageSize);
             index++ )
         {
             var selected = index == _selected;
@@ -348,7 +478,7 @@ internal sealed class EntityBrowserScreen
                 ? new Style(Color.White, Color.LightSlateGrey)
                 : Style.Plain;
             var prefix = selected ? "> " : "  ";
-            var label = prefix + _entities[index].LogicalName;
+            var label = prefix + GetListLabel(_components[index]);
             if( label.Length > width )
             {
                 label = label[..(width - 1)] + "…";
@@ -358,5 +488,36 @@ internal sealed class EntityBrowserScreen
         }
 
         return rows.Count == 0 ? new Text(_status) : new Rows(rows);
+    }
+
+    private static string GetListLabel(DataverseSolutionComponent component)
+    {
+        var type = SolutionComponentTypes.GetDisplayName(component.ComponentType);
+        var name = component.Entity != null
+            ? component.Entity.LogicalName
+            : component.ObjectId?.ToString() ?? string.Empty;
+        return $"{type}: {name}";
+    }
+
+    private IRenderable RenderComponentDetails(
+        DataverseSolutionComponent component,
+        DataverseEntityDetails details
+    )
+    {
+        var rows = new List<IRenderable>
+        {
+            ComponentDetailsView.CreateMembership(component)
+        };
+        if( component.ResolutionError != null )
+        {
+            rows.Add(new Text(component.ResolutionError, new Style(Color.Yellow)));
+        }
+
+        rows.Add(EntityDetailsView.Create(details.Entity, details.Fields));
+        rows.Add(new Text(
+            "Environment columns (not a solution membership list)",
+            new Style(Color.Grey58)
+        ));
+        return new Rows(rows);
     }
 }

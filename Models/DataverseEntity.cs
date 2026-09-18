@@ -2,6 +2,7 @@ namespace dvtui.Models;
 
 public sealed class DataverseEntity
 {
+    public Guid MetadataId { get; init; }
     public string LogicalName { get; init; } = string.Empty;
     public string SchemaName { get; init; } = string.Empty;
     public string DisplayName { get; init; } = string.Empty;
