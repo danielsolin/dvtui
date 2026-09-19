@@ -90,27 +90,14 @@ internal sealed class SolutionBrowserScreen
             canWrite,
             writeDisabledReason
         );
-        var previousControlCMode = Console.TreatControlCAsInput;
         var result = new SolutionBrowserSelection[1];
-        AnsiConsole.AlternateScreen(() =>
-        {
-            Console.TreatControlCAsInput = true;
-            AnsiConsole.Clear();
-            try
-            {
-                AnsiConsole.Live(screen.Render())
-                    .StartAsync(
-                        context => screen.RunAsync(context, result)
-                    )
-                    .GetAwaiter()
-                    .GetResult();
-            }
-            finally
-            {
-                AnsiConsole.Cursor.Show();
-                Console.TreatControlCAsInput = previousControlCMode;
-            }
-        });
+        AnsiConsole.Clear();
+        AnsiConsole.Live(screen.Render())
+            .StartAsync(
+                context => screen.RunAsync(context, result)
+            )
+            .GetAwaiter()
+            .GetResult();
 
         return result[0];
     }
@@ -615,7 +602,7 @@ internal sealed class SolutionBrowserScreen
         rows.Add(EntityDetailsView.Create(details.Entity, details.Fields));
         rows.Add(new Text(
             "Environment columns (not a solution membership list)",
-            new Style(Color.Grey58)
+            TuiColors.SecondaryText
         ));
         return new Rows(rows);
     }

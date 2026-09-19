@@ -254,6 +254,30 @@ internal sealed class ColumnEditorScreen : IFormScreen
             return new Text("Enlarge the terminal (60 x 10). Esc: back.");
         }
 
+        var table = RenderForm();
+
+        var panel = new Panel(table)
+            .Header(_isEdit ? "Edit column" : "Create column")
+            .RoundedBorder()
+            .Expand();
+        panel.Height = height - 4;
+
+        var status = RenderStatus();
+        var hint = new Text(
+            "  Tab: next  Shift+Tab: previous  Ctrl+S: save  Esc: back",
+            Style.Parse("dim")
+        );
+
+        return new Layout()
+            .SplitRows(
+                new Layout().Update(panel),
+                new Layout().Size(1).Update(status),
+                new Layout().Size(1).Update(hint)
+            );
+    }
+
+    public IRenderable RenderForm()
+    {
         var table = new Table()
             .AddColumn(new TableColumn("Field").NoWrap())
             .AddColumn("Value");
@@ -291,24 +315,7 @@ internal sealed class ColumnEditorScreen : IFormScreen
             );
         }
 
-        var panel = new Panel(table)
-            .Header(_isEdit ? "Edit column" : "Create column")
-            .RoundedBorder()
-            .Expand();
-        panel.Height = height - 4;
-
-        var status = RenderStatus();
-        var hint = new Text(
-            "  Tab: next  Shift+Tab: previous  Ctrl+S: save  Esc: back",
-            Style.Parse("dim")
-        );
-
-        return new Layout()
-            .SplitRows(
-                new Layout().Update(panel),
-                new Layout().Size(1).Update(status),
-                new Layout().Size(1).Update(hint)
-            );
+        return table;
     }
 
     public void MarkOutcomeUnknown(string message)
@@ -928,7 +935,7 @@ internal sealed class ColumnEditorScreen : IFormScreen
     )
     {
         table.AddRow(
-            new Text(label, Style.Parse("grey")),
+            new Text(label, TuiColors.SecondaryText),
             new Text(DisplayValue(value))
         );
     }

@@ -1960,15 +1960,7 @@ public sealed class DataverseSchemaService
         int? baseLanguage = null
     )
     {
-        var kind = metadata switch
-        {
-            StringAttributeMetadata => ColumnKind.Text,
-            MemoAttributeMetadata => ColumnKind.MultilineText,
-            IntegerAttributeMetadata => ColumnKind.WholeNumber,
-            DecimalAttributeMetadata => ColumnKind.Decimal,
-            BooleanAttributeMetadata => ColumnKind.YesNo,
-            _ => ColumnKind.Unknown
-        };
+        var kind = GetColumnKind(metadata);
 
         int? maxLength = null;
         if( metadata is StringAttributeMetadata stringMeta )
@@ -1998,6 +1990,8 @@ public sealed class DataverseSchemaService
         var booleanMetadata = metadata as BooleanAttributeMetadata;
         var trueOption = booleanMetadata?.OptionSet?.TrueOption;
         var falseOption = booleanMetadata?.OptionSet?.FalseOption;
+        var isUnmanagedCustom = metadata.IsCustomAttribute == true
+            && metadata.IsManaged == false;
 
         return new DataverseColumn
         {
@@ -2015,13 +2009,18 @@ public sealed class DataverseSchemaService
             IsManaged = metadata.IsManaged,
             IsPrimaryId = metadata.IsPrimaryId,
             IsPrimaryName = metadata.IsPrimaryName,
-            IsCustomizable = metadata.IsCustomizable?.Value,
-            IsRenameable = metadata.IsRenameable?.Value,
+            IsCustomizable = metadata.IsCustomizable?.Value
+                ?? (isUnmanagedCustom ? true : null),
+            IsRenameable = metadata.IsRenameable?.Value
+                ?? (isUnmanagedCustom ? true : null),
             CanModifyAdditionalSettings =
-                metadata.CanModifyAdditionalSettings?.Value,
-            CanChangeRequirement = metadata.RequiredLevel?.CanBeChanged,
+                metadata.CanModifyAdditionalSettings?.Value
+                ?? (isUnmanagedCustom ? true : null),
+            CanChangeRequirement = metadata.RequiredLevel?.CanBeChanged
+                ?? (isUnmanagedCustom ? true : null),
             RequirementLevel = GetRequirementLevel(metadata.RequiredLevel?.Value),
-            AttributeTypeCode = metadata.AttributeType?.ToString(),
+            AttributeTypeCode = metadata.AttributeType?.ToString()
+                ?? metadata.AttributeTypeName?.ToString(),
             AttributeFormat = GetAttributeFormat(metadata),
             AttributeOf = metadata.AttributeOf,
             IsLogical = metadata.IsLogical,
@@ -2030,6 +2029,48 @@ public sealed class DataverseSchemaService
             BooleanDefaultValue = booleanMetadata?.DefaultValue,
             BooleanTrueLabel = GetLabel(trueOption?.Label, baseLanguage),
             BooleanFalseLabel = GetLabel(falseOption?.Label, baseLanguage)
+        };
+    }
+
+    private static ColumnKind GetColumnKind(AttributeMetadata metadata)
+    {
+        return metadata switch
+        {
+            StringAttributeMetadata => ColumnKind.Text,
+            MemoAttributeMetadata => ColumnKind.MultilineText,
+            IntegerAttributeMetadata => ColumnKind.WholeNumber,
+            DecimalAttributeMetadata => ColumnKind.Decimal,
+            BooleanAttributeMetadata => ColumnKind.YesNo,
+            _ => GetColumnKindFromTypeCode(metadata)
+        };
+    }
+
+    private static ColumnKind GetColumnKindFromTypeCode(
+        AttributeMetadata metadata
+    )
+    {
+        var kind = metadata.AttributeType switch
+        {
+            AttributeTypeCode.String => ColumnKind.Text,
+            AttributeTypeCode.Memo => ColumnKind.MultilineText,
+            AttributeTypeCode.Integer => ColumnKind.WholeNumber,
+            AttributeTypeCode.Decimal => ColumnKind.Decimal,
+            AttributeTypeCode.Boolean => ColumnKind.YesNo,
+            _ => ColumnKind.Unknown
+        };
+        if( kind != ColumnKind.Unknown )
+        {
+            return kind;
+        }
+
+        return metadata.AttributeTypeName?.ToString() switch
+        {
+            "StringType" or "String" => ColumnKind.Text,
+            "MemoType" or "Memo" => ColumnKind.MultilineText,
+            "IntegerType" or "Integer" => ColumnKind.WholeNumber,
+            "DecimalType" or "Decimal" => ColumnKind.Decimal,
+            "BooleanType" or "Boolean" => ColumnKind.YesNo,
+            _ => ColumnKind.Unknown
         };
     }
 
@@ -2072,13 +2113,57 @@ public sealed class DataverseSchemaService
     {
         return metadata switch
         {
-            StringAttributeMetadata value => value.FormatName?.ToString()
-                ?? value.Format?.ToString(),
-            MemoAttributeMetadata value => value.FormatName?.ToString()
-                ?? value.Format?.ToString(),
+            StringAttributeMetadata value => GetStringFormat(
+                value.FormatName,
+                value.Format
+            ),
+            MemoAttributeMetadata value => GetMemoFormat(
+                value.FormatName,
+                value.Format
+            ),
             IntegerAttributeMetadata value => value.Format?.ToString(),
             _ => null
         };
+    }
+
+    private static string? GetStringFormat(
+        StringFormatName? formatName,
+        StringFormat? format
+    )
+    {
+        if( formatName == StringFormatName.Text
+            || format == StringFormat.Text )
+        {
+            return "Text";
+        }
+
+        if( formatName == StringFormatName.TextArea
+            || format == StringFormat.TextArea )
+        {
+            return "TextArea";
+        }
+
+        return formatName?.ToString() ?? format?.ToString();
+    }
+
+    private static string? GetMemoFormat(
+        MemoFormatName? formatName,
+        StringFormat? format
+    )
+    {
+        if( formatName == MemoFormatName.Text
+            || format == StringFormat.Text )
+        {
+            return "Text";
+        }
+
+        if( formatName == MemoFormatName.TextArea
+            || format == StringFormat.TextArea )
+        {
+            return "TextArea";
+        }
+
+        return formatName?.ToString() ?? format?.ToString();
     }
 
     private static string GetLabelForLanguage(Label? label, int language)

@@ -12,7 +12,7 @@ internal enum TableColumnsAction
     None,
     Close,
     NewColumn,
-    EditColumn,
+    SaveColumn,
     DeleteColumn,
     Publish
 }
@@ -22,7 +22,7 @@ internal sealed class TableColumnsScreen
     private readonly DataverseService _service;
     private readonly DataverseEntity _entity;
     private readonly SolutionWriteContext _context;
-    private readonly bool _sessionPendingChanges;
+    private bool _sessionPendingChanges;
 
     private List<DataverseColumn> _columns = [];
     private List<ColumnCapability> _capabilities = [];
@@ -35,6 +35,7 @@ internal sealed class TableColumnsScreen
     private string _status = "Loading columns...";
     private TableColumnsAction _pendingAction = TableColumnsAction.None;
     private DataverseColumn? _pendingColumn;
+    private ColumnEditorScreen? _editor;
     private int _loadGeneration;
     private int _revision;
 
@@ -53,6 +54,7 @@ internal sealed class TableColumnsScreen
 
     public TableColumnsAction PendingAction => _pendingAction;
     public DataverseColumn? PendingColumn => _pendingColumn;
+    public ColumnEditorScreen? Editor => _editor;
     public int Revision => Volatile.Read(ref _revision);
     public bool Loading => _loading;
 
@@ -67,6 +69,25 @@ internal sealed class TableColumnsScreen
 
     public void HandleKey(ConsoleKeyInfo key)
     {
+        if( _editor != null )
+        {
+            _editor.HandleKey(key);
+            Touch();
+            if( _editor.PendingAction == FormAction.Close )
+            {
+                _editor = null;
+                _status = BuildColumnStatus();
+                Touch();
+            }
+            else if( _editor.PendingAction == FormAction.Submit )
+            {
+                _pendingAction = TableColumnsAction.SaveColumn;
+                Touch();
+            }
+
+            return;
+        }
+
         if( key.Key == ConsoleKey.Escape
             || key.Key == ConsoleKey.Q
             || key.KeyChar == '\u0003' )
@@ -127,6 +148,36 @@ internal sealed class TableColumnsScreen
                 BeginPublish();
                 break;
         }
+    }
+
+    public void ResetAction()
+    {
+        _pendingAction = TableColumnsAction.None;
+        _pendingColumn = null;
+        Touch();
+    }
+
+    public void CompleteEdit(bool succeeded)
+    {
+        if( succeeded )
+        {
+            _editor = null;
+            _sessionPendingChanges = true;
+            _status = "Column saved. Reloading columns...";
+        }
+        else
+        {
+            _editor?.ResetForRetry();
+            _status = _editor?.Status ?? "Column could not be saved.";
+        }
+
+        ResetAction();
+    }
+
+    public void SetPendingChanges(bool value)
+    {
+        _sessionPendingChanges = value;
+        Touch();
     }
 
     public IRenderable Render()
@@ -286,7 +337,15 @@ internal sealed class TableColumnsScreen
         }
 
         _pendingColumn = _columns[_selectedIndex];
-        _pendingAction = TableColumnsAction.EditColumn;
+        _editor = new ColumnEditorScreen(
+            _service,
+            _context,
+            _entity.LogicalName,
+            _entity.MetadataId,
+            _pendingColumn
+        );
+        _detailsFocused = true;
+        _status = "Editing " + _pendingColumn.LogicalName + ".";
         Touch();
     }
 
@@ -452,17 +511,10 @@ internal sealed class TableColumnsScreen
             var column = _columns[index];
             var capability = _capabilities[index];
             var canEdit = writesAllowed && capability.CanEdit;
-            var canDelete = writesAllowed && capability.CanDelete;
             var selected = index == _selectedIndex;
             var rowStyle = selected
                 ? Style.Parse("black on cyan1")
                 : Style.Parse("white");
-            var allowedStyle = selected
-                ? Style.Parse("black on cyan1")
-                : Style.Parse("green");
-            var blockedStyle = selected
-                ? Style.Parse("black on cyan1")
-                : Style.Parse("red");
             var name = string.IsNullOrWhiteSpace(column.SchemaName)
                 ? column.LogicalName
                 : column.SchemaName;
@@ -476,9 +528,9 @@ internal sealed class TableColumnsScreen
                 line,
                 selected
                     ? rowStyle
-                    : canEdit && canDelete
-                        ? allowedStyle
-                        : blockedStyle
+                    : canEdit
+                        ? TuiColors.EditableColumn
+                        : Style.Parse("red")
             ));
         }
 
@@ -487,27 +539,30 @@ internal sealed class TableColumnsScreen
 
     private IRenderable RenderDetails()
     {
-        var rows = new List<IRenderable>
+        if( _editor != null )
         {
-            new Text("Environment: " + Display(_context.EnvironmentUrl)),
-            new Text("Solution: " + Display(_context.SolutionUniqueName)),
-            new Text("Table: " + Display(_entity.LogicalName)),
-            new Text("Table metadata ID: " + _entity.MetadataId)
-        };
+            return _editor.RenderForm();
+        }
+
+        var table = new Table()
+            .AddColumn(new TableColumn("Property").NoWrap())
+            .AddColumn("Value");
+        AddDetail(table, "Environment", _context.EnvironmentUrl);
+        AddDetail(table, "Solution", _context.SolutionUniqueName);
+        AddDetail(table, "Table", _entity.LogicalName);
+        AddDetail(table, "Table metadata ID", _entity.MetadataId.ToString());
         if( IsWriteDisabled(out var writeReason) )
         {
-            rows.Add(new Text("Write actions: disabled (" + writeReason + ")"));
+            AddDetail(table, "Write actions", "Disabled (" + writeReason + ")");
         }
         else if( _sessionPendingChanges )
         {
-            rows.Add(new Text(
-                "Session pending changes: yes; publish this table explicitly."
-            ));
+            AddDetail(table, "Session pending changes", "Yes; publish explicitly");
         }
         if( _columns.Count == 0 )
         {
-            rows.Add(new Text("No column is selected."));
-            return new Rows(rows);
+            AddDetail(table, "Column", "No column is selected");
+            return table;
         }
 
         var column = _columns[_selectedIndex];
@@ -521,78 +576,96 @@ internal sealed class TableColumnsScreen
             ? capability.DeleteReason ?? "blocked"
             : _context.WriteDisabledReason
                 ?? ColumnCapabilityPolicy.ReasonManagedSolution;
-        rows.Add(new Text("Column: " + Display(column.SchemaName)));
-        rows.Add(new Text("Logical name: " + Display(column.LogicalName)));
-        rows.Add(new Text("Metadata ID: " + column.MetadataId));
-        rows.Add(new Text("Display name: " + Display(column.DisplayName)));
-        rows.Add(new Text("Type: " + GetKindText(column.Kind)));
+        AddDetail(table, "Column", column.SchemaName);
+        AddDetail(table, "Logical name", column.LogicalName);
+        AddDetail(table, "Metadata ID", column.MetadataId.ToString());
+        AddDetail(table, "Display name", column.DisplayName);
+        AddDetail(table, "Type", GetKindText(column.Kind));
         if( !string.IsNullOrWhiteSpace(column.AttributeFormat) )
         {
-            rows.Add(new Text("Format: " + column.AttributeFormat));
+            AddDetail(table, "Format", column.AttributeFormat);
         }
-        rows.Add(new Text(
-            "Requirement: " + GetRequirementText(column)
-        ));
+        AddDetail(table, "Requirement", GetRequirementText(column));
         if( column.MaxLength.HasValue )
         {
-            rows.Add(new Text(
-                "Maximum length: " + column.MaxLength.Value
-            ));
+            AddDetail(table, "Maximum length", column.MaxLength.Value.ToString());
         }
 
         if( column.MinValue.HasValue || column.MaxValue.HasValue )
         {
-            rows.Add(new Text(
-                "Numeric bounds: "
-                + DisplayDecimal(column.MinValue)
+            AddDetail(
+                table,
+                "Numeric bounds",
+                DisplayDecimal(column.MinValue)
                 + " .. "
                 + DisplayDecimal(column.MaxValue)
-            ));
+            );
         }
 
         if( column.Precision.HasValue )
         {
-            rows.Add(new Text("Precision: " + column.Precision.Value));
+            AddDetail(table, "Precision", column.Precision.Value.ToString());
         }
 
         if( column.Kind == ColumnKind.YesNo )
         {
-            rows.Add(new Text(
-                "Default: " + (column.BooleanDefaultValue == true ? "Yes" : "No")
-            ));
-            rows.Add(new Text(
-                "Yes/No labels: "
-                + Display(column.BooleanTrueLabel ?? string.Empty)
+            AddDetail(
+                table,
+                "Default",
+                column.BooleanDefaultValue == true ? "Yes" : "No"
+            );
+            AddDetail(
+                table,
+                "Yes/No labels",
+                Display(column.BooleanTrueLabel ?? string.Empty)
                 + " / "
                 + Display(column.BooleanFalseLabel ?? string.Empty)
-            ));
+            );
         }
-        rows.Add(new Text("Description: " + Display(column.Description)));
-        rows.Add(new Text(
-            "Edit: " + (capability.CanEdit
+        AddDetail(table, "Description", column.Description);
+        AddDetail(
+            table,
+            "Edit",
+            capability.CanEdit
                 && writesAllowed
                 ? "available"
-                : editReason)
-        ));
-        rows.Add(new Text(
-            "Delete: " + (capability.CanDelete
+                : editReason
+        );
+        AddDetail(
+            table,
+            "Delete",
+            capability.CanDelete
                 && writesAllowed
                 ? "available"
-                : deleteReason)
-        ));
-        return new Rows(rows);
+                : deleteReason
+        );
+        return table;
     }
 
     private IRenderable RenderHint()
     {
+        if( _editor != null )
+        {
+            return new Text(
+                "  Tab: next  Shift+Tab: previous  Ctrl+S: save  Esc: cancel edit",
+                Style.Parse("dim")
+            );
+        }
+
         var writeHint = _context.CanWrite && !_context.IsManaged
             ? "N: New  E: Edit  D: Delete  P: Publish"
             : "N/E/D/P: disabled";
         return new Text(
-            "  " + writeHint + "  R: Refresh  "
+            "  Green: editable  Orange/red: read-only  " + writeHint
+                + "  R: Refresh  "
             + "Tab: Details  Esc: Back",
             Style.Parse("dim")
         );
+    }
+
+    private static void AddDetail(Table table, string property, string value)
+    {
+        table.AddRow(new Text(property), new Text(Display(value)));
     }
 
     private static string GetKindText(ColumnKind kind)

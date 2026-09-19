@@ -198,6 +198,28 @@ internal static class LiveTest
                 $"Read back column: {fresh.SchemaName} "
                 + $"len={fresh.MaxLength}"
             );
+            var listed = service.GetColumnsAsync(
+                tableLogicalName,
+                tableId,
+                CancellationToken.None
+            ).GetAwaiter().GetResult().First(column =>
+                string.Equals(
+                    column.LogicalName,
+                    columnLogicalName,
+                    StringComparison.OrdinalIgnoreCase
+                )
+            );
+            var listedCapability = ColumnCapabilityPolicy.Evaluate(listed);
+            if( listed.Kind != ColumnKind.Text
+                || listed.AttributeFormat != "Text"
+                || !listedCapability.CanEdit )
+            {
+                throw new InvalidOperationException(
+                    "Column list readback did not identify the text column "
+                    + "as editable."
+                );
+            }
+            Console.WriteLine("Listed column is editable text.");
 
             var updateResult = schema.UpdateColumnAsync(
                 new UpdateColumnRequest
@@ -396,11 +418,22 @@ internal static class LiveTest
             using var cancellation = new CancellationTokenSource(
                 TimeSpan.FromSeconds(30)
             );
-            var entity = service.GetEntityAsync(
-                tableLogicalName,
-                tableId,
-                cancellation.Token
-            ).GetAwaiter().GetResult();
+            DataverseEntityDetails entity;
+            try
+            {
+                entity = service.GetEntityAsync(
+                    tableLogicalName,
+                    tableId,
+                    cancellation.Token
+                ).GetAwaiter().GetResult();
+            }
+            catch( Exception ex ) when( IsMetadataNotFound(ex) )
+            {
+                entity = service.GetEntityByLogicalNameAsync(
+                    tableLogicalName,
+                    cancellation.Token
+                ).GetAwaiter().GetResult();
+            }
             if( entity.Entity.MetadataId != tableId
                 || !string.Equals(
                     entity.Entity.LogicalName,
@@ -471,6 +504,10 @@ internal static class LiveTest
         for( var current = exception; current != null; current = current.InnerException )
         {
             if( current.Message.Contains(
+                "could not find",
+                StringComparison.OrdinalIgnoreCase
+            )
+                || current.Message.Contains(
                 "not found",
                 StringComparison.OrdinalIgnoreCase
             )

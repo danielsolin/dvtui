@@ -21,7 +21,7 @@ internal static class ComponentDetailsView
         rows.Add(new Text(
             "Detailed inspection of this component type is not available "
             + "in step 1.",
-            new Style(Color.Grey58)
+            TuiColors.SecondaryText
         ));
         return new Rows(rows);
     }
@@ -57,7 +57,7 @@ internal static class ComponentDetailsView
     private static void AddRow(Table table, string label, string? value)
     {
         table.AddRow(
-            new Text(label, new Style(Color.Grey58)),
+            new Text(label, TuiColors.SecondaryText),
             new Text(string.IsNullOrWhiteSpace(value) ? "—" : value)
         );
     }

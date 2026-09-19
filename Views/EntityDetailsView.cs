@@ -136,7 +136,7 @@ internal static class EntityDetailsView
     private static void AddRow(Table table, string label, string? value)
     {
         table.AddRow(
-            new Text(label, new Style(Color.Grey58)),
+            new Text(label, TuiColors.SecondaryText),
             new Text(string.IsNullOrWhiteSpace(value) ? "—" : value)
         );
     }

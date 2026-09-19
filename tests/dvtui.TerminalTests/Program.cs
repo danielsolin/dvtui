@@ -234,6 +234,28 @@ if( mode == "column-editor-edit" )
     return 0;
 }
 
+if( mode == "confirmation" )
+{
+    var screen = new ConfirmationScreen(
+        "Delete column",
+        [
+            ("Environment", "https://test.crm.dynamics.com"),
+            ("Solution", "contoso"),
+            ("Table", "account"),
+            ("Column", "new_custom")
+        ],
+        ["This deletes the column and its stored data."],
+        "Type the full column logical name to confirm.",
+        value => value == "new_custom"
+    );
+    AnsiConsole.AlternateScreen(() =>
+    {
+        var confirmed = screen.Show();
+        Console.WriteLine(confirmed ? "confirmed" : "cancelled");
+    });
+    return 0;
+}
+
 return 0;
 
 SolutionWriteContext BuildWriteContext()

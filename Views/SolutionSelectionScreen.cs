@@ -42,25 +42,12 @@ internal sealed class SolutionSelectionScreen
         }
 
         var screen = new SolutionSelectionScreen(load);
-        var previousControlCMode = Console.TreatControlCAsInput;
         var selected = new DataverseSolution?[1];
-        AnsiConsole.AlternateScreen(() =>
-        {
-            Console.TreatControlCAsInput = true;
-            AnsiConsole.Clear();
-            try
-            {
-                AnsiConsole.Live(screen.Render())
-                    .StartAsync(context => screen.RunAsync(context, selected))
-                    .GetAwaiter()
-                    .GetResult();
-            }
-            finally
-            {
-                AnsiConsole.Cursor.Show();
-                Console.TreatControlCAsInput = previousControlCMode;
-            }
-        });
+        AnsiConsole.Clear();
+        AnsiConsole.Live(screen.Render())
+            .StartAsync(context => screen.RunAsync(context, selected))
+            .GetAwaiter()
+            .GetResult();
 
         return selected[0];
     }
@@ -309,7 +296,7 @@ internal sealed class SolutionSelectionScreen
     private static void AddRow(Table table, string label, string? value)
     {
         table.AddRow(
-            new Text(label, new Style(Color.Grey58)),
+            new Text(label, TuiColors.SecondaryText),
             new Text(string.IsNullOrWhiteSpace(value) ? "—" : value)
         );
     }

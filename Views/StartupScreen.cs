@@ -36,34 +36,16 @@ internal sealed class StartupScreen
         }
 
         var screen = new StartupScreen(initialUrl);
-        var connected = false;
-        var previousControlCMode = Console.TreatControlCAsInput;
-
         try
         {
-            AnsiConsole.AlternateScreen(() =>
-            {
-                Console.TreatControlCAsInput = true;
-                AnsiConsole.Clear();
-
-                try
-                {
-                    connected = AnsiConsole.Live(screen.Render())
-                        .Start(context => screen.Run(context, connect));
-                }
-                finally
-                {
-                    AnsiConsole.Cursor.Show();
-                    Console.TreatControlCAsInput = previousControlCMode;
-                }
-            });
+            AnsiConsole.Clear();
+            return AnsiConsole.Live(screen.Render())
+                .Start(context => screen.Run(context, connect));
         }
         finally
         {
             screen.StopConnection();
         }
-
-        return connected;
     }
 
     private bool Run(
@@ -175,7 +157,7 @@ internal sealed class StartupScreen
         {
             if( !connection.Wait(
                 TimeSpan.FromMilliseconds(ConnectionShutdownTimeoutMilliseconds)
-            ))
+            ) )
             {
                 ObserveFaults(connection);
                 return;
@@ -229,7 +211,7 @@ internal sealed class StartupScreen
             Text.Empty,
             input,
             connecting ? RenderProgress(formWidth) : Text.Empty,
-            new Text(status, new Style(Color.Grey))
+            new Text(status, TuiColors.SecondaryText)
         );
 
         var form = new Panel(content)

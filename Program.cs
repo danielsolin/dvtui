@@ -1,9 +1,9 @@
-using System.Text;
 using dvtui.Models;
 using dvtui.Services;
 using dvtui.Views;
 
 using Spectre.Console;
+using Spectre.Console.Rendering;
 
 namespace dvtui;
 
@@ -23,38 +23,61 @@ internal static class Program
 
         try
         {
-            var connected = StartupScreen.Show(
-                GetEnvUrl(args),
-                async (url, cancellationToken) =>
+            void RunApplication()
+            {
+                var connected = StartupScreen.Show(
+                    GetEnvUrl(args),
+                    async (url, cancellationToken) =>
+                    {
+                        var candidate = new DataverseService(url);
+                        var assigned = false;
+                        try
+                        {
+                            await Task.Run(
+                                candidate.Connect,
+                                cancellationToken
+                            );
+                            cancellationToken.ThrowIfCancellationRequested();
+                            service = candidate;
+                            assigned = true;
+                        }
+                        finally
+                        {
+                            if( !assigned )
+                            {
+                                candidate.Dispose();
+                            }
+                        }
+                    }
+                );
+
+                if( connected && service != null )
                 {
-                    var candidate = new DataverseService(url);
-                    var assigned = false;
+                    RunSolutionLoop(service);
+                }
+            }
+
+            if( Console.IsInputRedirected || Console.IsOutputRedirected )
+            {
+                RunApplication();
+            }
+            else
+            {
+                var previousControlCMode = Console.TreatControlCAsInput;
+                AnsiConsole.AlternateScreen(() =>
+                {
+                    Console.TreatControlCAsInput = true;
+                    AnsiConsole.Clear();
                     try
                     {
-                        await Task.Run(
-                            candidate.Connect,
-                            cancellationToken
-                        );
-                        cancellationToken.ThrowIfCancellationRequested();
-                        service = candidate;
-                        assigned = true;
+                        RunApplication();
                     }
                     finally
                     {
-                        if( !assigned )
-                        {
-                            candidate.Dispose();
-                        }
+                        RestoreTerminal(previousControlCMode);
                     }
-                }
-            );
-
-            if( !connected || service == null )
-            {
-                return;
+                });
             }
-
-            RunSolutionLoop(service);
         }
         catch( Exception ex )
         {
@@ -172,7 +195,8 @@ internal static class Program
         }
         catch( Exception ex )
         {
-            AnsiConsole.WriteLine(
+            ShowOperationResult(
+                "Solution unavailable",
                 "Could not load write context: " + ex.Message
             );
             return new SolutionWriteContext
@@ -198,31 +222,15 @@ internal static class Program
             return;
         }
 
-        var previousControlCMode = Console.TreatControlCAsInput;
-        AnsiConsole.AlternateScreen(() =>
-        {
-            Console.TreatControlCAsInput = true;
-            AnsiConsole.Clear();
-            try
-            {
-                AnsiConsole.Live(screen.Render())
-                    .StartAsync(context => RunFormAsync(
-                        screen,
-                        context,
-                        token => screen.SubmitAsync(token)
-                    ))
-                    .GetAwaiter()
-                    .GetResult();
-            }
-            finally
-            {
-                RestoreTerminal(previousControlCMode);
-            }
-        });
-        if( screen.OutcomeUnknown )
-        {
-            AnsiConsole.WriteLine(screen.Status);
-        }
+        AnsiConsole.Clear();
+        AnsiConsole.Live(screen.Render())
+            .StartAsync(context => RunFormAsync(
+                screen,
+                context,
+                token => screen.SubmitAsync(token)
+            ))
+            .GetAwaiter()
+            .GetResult();
     }
 
     private static void RunTableColumns(
@@ -237,100 +245,18 @@ internal static class Program
             return;
         }
 
-        var sessionPendingChanges = pendingTables.Contains(entity.MetadataId);
+        var screen = new TableColumnsScreen(
+            service,
+            entity,
+            context,
+            pendingTables.Contains(entity.MetadataId)
+        );
+        var loadColumns = true;
         while( true )
         {
-            var screen = new TableColumnsScreen(
-                service,
-                entity,
-                context,
-                sessionPendingChanges
-            );
-            var previousControlCMode = Console.TreatControlCAsInput;
-            var action = TableColumnsAction.None;
-            DataverseColumn? pendingColumn = null;
-            AnsiConsole.AlternateScreen(() =>
-            {
-                Console.TreatControlCAsInput = true;
-                AnsiConsole.Clear();
-                try
-                {
-                    AnsiConsole.Live(screen.Render())
-                        .StartAsync(async ctx =>
-                        {
-                            using var cancellation = new CancellationTokenSource();
-                            try
-                            {
-                                var loadTask = screen.LoadAsync(
-                                    cancellation.Token
-                                );
-                                var lastRevision = -1;
-                                var lastSize = (Width: 0, Height: 0);
-                                while( true )
-                                {
-                                    if( loadTask != null
-                                        && loadTask.IsCompleted )
-                                    {
-                                        loadTask = null;
-                                    }
-
-                                    while( Console.KeyAvailable )
-                                    {
-                                        var key = Console.ReadKey(
-                                            intercept: true
-                                        );
-                                        if( key.Key == ConsoleKey.R
-                                            && loadTask == null )
-                                        {
-                                            loadTask = screen.LoadAsync(
-                                                cancellation.Token
-                                            );
-                                        }
-                                        else
-                                        {
-                                            screen.HandleKey(key);
-                                        }
-
-                                        if( screen.PendingAction !=
-                                            TableColumnsAction.None )
-                                        {
-                                            action = screen.PendingAction;
-                                            pendingColumn = screen.PendingColumn;
-                                            return;
-                                        }
-                                    }
-
-                                    var size = (
-                                        AnsiConsole.Profile.Width,
-                                        AnsiConsole.Profile.Height
-                                    );
-                                    var revision = screen.Revision;
-                                    if( revision != lastRevision
-                                        || size != lastSize )
-                                    {
-                                        ctx.UpdateTarget(screen.Render());
-                                        lastRevision = revision;
-                                        lastSize = size;
-                                    }
-
-                                    await Task.Delay(
-                                        FormPollIntervalMilliseconds
-                                    );
-                                }
-                            }
-                            finally
-                            {
-                                cancellation.Cancel();
-                            }
-                        })
-                        .GetAwaiter()
-                        .GetResult();
-                }
-                finally
-                {
-                    RestoreTerminal(previousControlCMode);
-                }
-            });
+            var action = RunTableColumnsScreen(screen, loadColumns);
+            loadColumns = false;
+            var pendingColumn = screen.PendingColumn;
 
             if( action == TableColumnsAction.Close
                 || action == TableColumnsAction.None )
@@ -340,6 +266,7 @@ internal static class Program
 
             if( action == TableColumnsAction.NewColumn )
             {
+                screen.ResetAction();
                 if( RunColumnEditor(
                     service,
                     context,
@@ -348,28 +275,26 @@ internal static class Program
                     null
                 ) )
                 {
-                    sessionPendingChanges = true;
                     pendingTables.Add(entity.MetadataId);
+                    screen.SetPendingChanges(true);
+                    loadColumns = true;
                 }
             }
-            else if( action == TableColumnsAction.EditColumn
-                && pendingColumn != null )
+            else if( action == TableColumnsAction.SaveColumn
+                && screen.Editor != null )
             {
-                if( RunColumnEditor(
-                    service,
-                    context,
-                    entity.LogicalName,
-                    entity.MetadataId,
-                    pendingColumn
-                ) )
+                var saved = RunEmbeddedColumnEditor(screen, screen.Editor);
+                screen.CompleteEdit(saved);
+                if( saved )
                 {
-                    sessionPendingChanges = true;
                     pendingTables.Add(entity.MetadataId);
+                    loadColumns = true;
                 }
             }
             else if( action == TableColumnsAction.DeleteColumn
                 && pendingColumn != null )
             {
+                screen.ResetAction();
                 if( DeleteColumn(
                     service,
                     context,
@@ -378,12 +303,14 @@ internal static class Program
                     pendingColumn
                 ) )
                 {
-                    sessionPendingChanges = true;
                     pendingTables.Add(entity.MetadataId);
+                    screen.SetPendingChanges(true);
+                    loadColumns = true;
                 }
             }
             else if( action == TableColumnsAction.Publish )
             {
+                screen.ResetAction();
                 if( PublishTable(
                     service,
                     context,
@@ -391,11 +318,133 @@ internal static class Program
                     entity.MetadataId
                 ) )
                 {
-                    sessionPendingChanges = false;
                     pendingTables.Remove(entity.MetadataId);
+                    screen.SetPendingChanges(false);
                 }
             }
         }
+    }
+
+    private static TableColumnsAction RunTableColumnsScreen(
+        TableColumnsScreen screen,
+        bool loadColumns
+    )
+    {
+        AnsiConsole.Clear();
+        AnsiConsole.Live(screen.Render())
+            .StartAsync(async context =>
+            {
+                using var cancellation = new CancellationTokenSource();
+                Task? loadTask = loadColumns
+                    ? screen.LoadAsync(cancellation.Token)
+                    : null;
+                try
+                {
+                    var lastRevision = -1;
+                    var lastSize = (Width: 0, Height: 0);
+                    while( screen.PendingAction == TableColumnsAction.None )
+                    {
+                        if( loadTask?.IsCompleted == true )
+                        {
+                            loadTask = null;
+                        }
+
+                        while( Console.KeyAvailable )
+                        {
+                            var key = Console.ReadKey(intercept: true);
+                            if( key.Key == ConsoleKey.R && loadTask == null )
+                            {
+                                loadTask = screen.LoadAsync(cancellation.Token);
+                            }
+                            else
+                            {
+                                screen.HandleKey(key);
+                            }
+                        }
+
+                        var size = (
+                            AnsiConsole.Profile.Width,
+                            AnsiConsole.Profile.Height
+                        );
+                        if( screen.Revision != lastRevision || size != lastSize )
+                        {
+                            context.UpdateTarget(screen.Render());
+                            lastRevision = screen.Revision;
+                            lastSize = size;
+                        }
+
+                        await Task.Delay(FormPollIntervalMilliseconds);
+                    }
+                }
+                finally
+                {
+                    cancellation.Cancel();
+                }
+            })
+            .GetAwaiter()
+            .GetResult();
+        return screen.PendingAction;
+    }
+
+    private static bool RunEmbeddedColumnEditor(
+        TableColumnsScreen host,
+        ColumnEditorScreen editor
+    )
+    {
+        AnsiConsole.Clear();
+        AnsiConsole.Live(host.Render())
+            .StartAsync(async context =>
+            {
+                using var cancellation = new CancellationTokenSource();
+                var submitTask = editor.SubmitAsync(cancellation.Token);
+                var timeoutAt = DateTime.UtcNow + FormOperationTimeout;
+                DateTime? cancellationStarted = null;
+                while( !submitTask.IsCompleted )
+                {
+                    while( Console.KeyAvailable )
+                    {
+                        var key = Console.ReadKey(intercept: true);
+                        if( IsCancelKey(key)
+                            && !cancellation.IsCancellationRequested )
+                        {
+                            editor.RequestCancellation();
+                            cancellation.Cancel();
+                            cancellationStarted = DateTime.UtcNow;
+                        }
+                    }
+
+                    var now = DateTime.UtcNow;
+                    if( !cancellation.IsCancellationRequested
+                        && now >= timeoutAt )
+                    {
+                        editor.RequestCancellation();
+                        cancellation.Cancel();
+                        cancellationStarted = now;
+                    }
+
+                    if( cancellationStarted.HasValue
+                        && now - cancellationStarted.Value
+                            >= FormCancellationGracePeriod )
+                    {
+                        editor.MarkOutcomeUnknown(
+                            "The request did not finish after cancellation. "
+                            + "Verify Dataverse before retrying."
+                        );
+                        ObserveLateTask(submitTask);
+                        context.UpdateTarget(host.Render());
+                        return;
+                    }
+
+                    context.UpdateTarget(host.Render());
+                    await Task.Delay(FormPollIntervalMilliseconds);
+                }
+
+                await submitTask;
+                context.UpdateTarget(host.Render());
+            })
+            .GetAwaiter()
+            .GetResult();
+        return editor.MutationSucceeded;
     }
 
     private static bool RunColumnEditor(
@@ -419,7 +468,8 @@ internal static class Program
                 ).GetAwaiter().GetResult();
                 if( refreshed.MetadataId != existing.MetadataId )
                 {
-                    AnsiConsole.WriteLine(
+                    ShowOperationResult(
+                        "Edit column",
                         "The column identity changed; reload before editing."
                     );
                     return false;
@@ -429,7 +479,8 @@ internal static class Program
             }
             catch( Exception ex )
             {
-                AnsiConsole.WriteLine(
+                ShowOperationResult(
+                    "Edit column",
                     "Could not load the column for editing: " + ex.Message
                 );
                 return false;
@@ -448,31 +499,15 @@ internal static class Program
             return false;
         }
 
-        var previousControlCMode = Console.TreatControlCAsInput;
-        AnsiConsole.AlternateScreen(() =>
-        {
-            Console.TreatControlCAsInput = true;
-            AnsiConsole.Clear();
-            try
-            {
-                AnsiConsole.Live(screen.Render())
-                    .StartAsync(context => RunFormAsync(
-                        screen,
-                        context,
-                        token => screen.SubmitAsync(token)
-                    ))
-                    .GetAwaiter()
-                    .GetResult();
-            }
-            finally
-            {
-                RestoreTerminal(previousControlCMode);
-            }
-        });
-        if( screen.OutcomeUnknown )
-        {
-            AnsiConsole.WriteLine(screen.Status);
-        }
+        AnsiConsole.Clear();
+        AnsiConsole.Live(screen.Render())
+            .StartAsync(context => RunFormAsync(
+                screen,
+                context,
+                token => screen.SubmitAsync(token)
+            ))
+            .GetAwaiter()
+            .GetResult();
 
         return screen.MutationSucceeded;
     }
@@ -621,108 +656,119 @@ internal static class Program
     {
         var outcome = SchemaMutationOutcome.Failed;
         var status = operationDescription;
-        var previousControlCMode = Console.TreatControlCAsInput;
-        AnsiConsole.AlternateScreen(() =>
-        {
-            Console.TreatControlCAsInput = true;
-            AnsiConsole.Clear();
-            try
+        var panel = CreateOperationPanel(operationDescription, status);
+        AnsiConsole.Clear();
+        AnsiConsole.Live(panel)
+            .StartAsync(async displayContext =>
             {
-                AnsiConsole.Live(new Text(operationDescription))
-                    .StartAsync(async displayContext =>
+                using var cancellation = new CancellationTokenSource();
+                Task mutationTask;
+                try
+                {
+                    mutationTask = operation(cancellation.Token);
+                }
+                catch( Exception ex )
+                {
+                    status = ex.Message;
+                    displayContext.UpdateTarget(
+                        CreateOperationPanel(operationDescription, status)
+                    );
+                    return;
+                }
+
+                var timeoutAt = DateTime.UtcNow + FormOperationTimeout;
+                DateTime? cancellationStarted = null;
+                while( !mutationTask.IsCompleted )
+                {
+                    while( Console.KeyAvailable )
                     {
-                        using var cancellation = new CancellationTokenSource();
-                        Task mutationTask;
-                        try
+                        var key = Console.ReadKey(intercept: true);
+                        if( IsCancelKey(key)
+                            && !cancellation.IsCancellationRequested )
                         {
-                            mutationTask = operation(cancellation.Token);
+                            cancellationStarted = DateTime.UtcNow;
+                            cancellation.Cancel();
+                            status = "Cancelling "
+                                + operationDescription + "...";
                         }
-                        catch( Exception ex )
-                        {
-                            status = ex.Message;
-                            displayContext.UpdateTarget(new Text(status));
-                            return;
-                        }
+                    }
 
-                        var timeoutAt = DateTime.UtcNow + FormOperationTimeout;
-                        DateTime? cancellationStarted = null;
-                        while( !mutationTask.IsCompleted )
-                        {
-                            while( Console.KeyAvailable )
-                            {
-                                var key = Console.ReadKey(intercept: true);
-                                if( IsCancelKey(key)
-                                    && !cancellation.IsCancellationRequested )
-                                {
-                                    cancellationStarted = DateTime.UtcNow;
-                                    cancellation.Cancel();
-                                    status = "Cancelling "
-                                        + operationDescription + "...";
-                                }
-                            }
+                    var now = DateTime.UtcNow;
+                    if( !cancellation.IsCancellationRequested
+                        && now >= timeoutAt )
+                    {
+                        cancellationStarted = now;
+                        cancellation.Cancel();
+                        status = "Cancelling "
+                            + operationDescription + " after timeout...";
+                    }
 
-                            var now = DateTime.UtcNow;
-                            if( !cancellation.IsCancellationRequested
-                                && now >= timeoutAt )
-                            {
-                                cancellationStarted = now;
-                                cancellation.Cancel();
-                                status = "Cancelling "
-                                    + operationDescription + " after timeout...";
-                            }
+                    if( cancellationStarted.HasValue
+                        && now - cancellationStarted.Value
+                            >= FormCancellationGracePeriod )
+                    {
+                        outcome = SchemaMutationOutcome.Unknown;
+                        status = "The outcome of "
+                            + operationDescription
+                            + " is unknown. Verify Dataverse before retrying.";
+                        ObserveLateTask(mutationTask);
+                        displayContext.UpdateTarget(
+                            CreateOperationPanel(operationDescription, status)
+                        );
+                        return;
+                    }
 
-                            if( cancellationStarted.HasValue
-                                && now - cancellationStarted.Value
-                                    >= FormCancellationGracePeriod )
-                            {
-                                outcome = SchemaMutationOutcome.Unknown;
-                                status = "The outcome of "
-                                    + operationDescription
-                                    + " is unknown. Verify Dataverse before retrying.";
-                                ObserveLateTask(mutationTask);
-                                displayContext.UpdateTarget(new Text(status));
-                                return;
-                            }
+                    displayContext.UpdateTarget(
+                        CreateOperationPanel(operationDescription, status)
+                    );
+                    await Task.Delay(FormPollIntervalMilliseconds);
+                }
 
-                            displayContext.UpdateTarget(new Text(status));
-                            await Task.Delay(FormPollIntervalMilliseconds);
-                        }
+                try
+                {
+                    await mutationTask;
+                    outcome = SchemaMutationOutcome.Succeeded;
+                    status = operationDescription + " completed.";
+                }
+                catch( OperationCanceledException )
+                {
+                    outcome = SchemaMutationOutcome.Unknown;
+                    status = "The outcome of "
+                        + operationDescription
+                        + " is unknown. Verify Dataverse before retrying.";
+                }
+                catch( SchemaWriteOutcomeUnknownException ex )
+                {
+                    outcome = SchemaMutationOutcome.Unknown;
+                    status = ex.Message;
+                }
+                catch( Exception ex )
+                {
+                    status = ex.Message;
+                }
 
-                        try
-                        {
-                            await mutationTask;
-                            outcome = SchemaMutationOutcome.Succeeded;
-                            status = operationDescription + " completed.";
-                        }
-                        catch( OperationCanceledException )
-                        {
-                            outcome = SchemaMutationOutcome.Unknown;
-                            status = "The outcome of "
-                                + operationDescription
-                                + " is unknown. Verify Dataverse before retrying.";
-                        }
-                        catch( SchemaWriteOutcomeUnknownException ex )
-                        {
-                            outcome = SchemaMutationOutcome.Unknown;
-                            status = ex.Message;
-                        }
-                        catch( Exception ex )
-                        {
-                            status = ex.Message;
-                        }
-
-                        displayContext.UpdateTarget(new Text(status));
-                    })
-                    .GetAwaiter()
-                    .GetResult();
-            }
-            finally
-            {
-                RestoreTerminal(previousControlCMode);
-            }
-        });
+                displayContext.UpdateTarget(
+                    CreateOperationPanel(operationDescription, status)
+                );
+            })
+            .GetAwaiter()
+            .GetResult();
         resultStatus = status;
         return outcome;
+    }
+
+    private static IRenderable CreateOperationPanel(
+        string operationDescription,
+        string status
+    )
+    {
+        return new Panel(new Rows(
+            new Text(operationDescription),
+            new Text(status, Style.Parse("yellow"))
+        ))
+            .Header("Dataverse operation")
+            .RoundedBorder()
+            .Expand();
     }
 
     private static bool DeleteColumn(
@@ -769,16 +815,15 @@ internal static class Program
             );
             if( outcome == SchemaMutationOutcome.Succeeded )
             {
-                AnsiConsole.WriteLine("Column deleted.");
                 return true;
             }
 
-            AnsiConsole.WriteLine(status);
+            ShowOperationResult("Delete column", status);
             return false;
         }
         catch( Exception ex )
         {
-            AnsiConsole.WriteLine(ex.Message);
+            ShowOperationResult("Delete column", ex.Message);
             return false;
         }
     }
@@ -811,16 +856,15 @@ internal static class Program
             );
             if( outcome == SchemaMutationOutcome.Succeeded )
             {
-                AnsiConsole.WriteLine("Table published.");
                 return true;
             }
 
-            AnsiConsole.WriteLine(status);
+            ShowOperationResult("Publish table", status);
             return false;
         }
         catch( Exception ex )
         {
-            AnsiConsole.WriteLine(ex.Message);
+            ShowOperationResult("Publish table", ex.Message);
             return false;
         }
     }
@@ -829,23 +873,23 @@ internal static class Program
         IReadOnlyList<DependencyInfo> dependencies
     )
     {
-        AnsiConsole.Clear();
-        AnsiConsole.WriteLine(
-            $"Column has {dependencies.Count} dependencies. Delete is blocked."
-        );
+        var content = new List<IRenderable>
+        {
+            new Text(
+                $"Column has {dependencies.Count} dependencies. Delete is blocked.",
+                Style.Parse("yellow")
+            )
+        };
         foreach( var dependency in dependencies )
         {
             var name = string.IsNullOrWhiteSpace(dependency.Name)
                 ? dependency.ObjectId?.ToString() ?? "Unknown"
                 : dependency.Name;
-            AnsiConsole.WriteLine(
-                $"- {name} (component type {dependency.ComponentType?.ToString()
-                    ?? "unknown"})"
-            );
+            var type = dependency.ComponentType?.ToString() ?? "unknown";
+            content.Add(new Text($"- {name} (component type {type})"));
         }
 
-        AnsiConsole.WriteLine("Press Enter or Esc to return.");
-        WaitForConfirmationKey();
+        MessageScreen.Show("Delete blocked", content);
     }
 
     private static bool ConfirmDeleteColumn(
@@ -854,27 +898,20 @@ internal static class Program
         DataverseColumn column
     )
     {
-        AnsiConsole.Clear();
-        AnsiConsole.WriteLine("Delete column");
-        AnsiConsole.WriteLine("Environment: " + context.EnvironmentUrl);
-        AnsiConsole.WriteLine("Solution: " + context.SolutionUniqueName);
-        AnsiConsole.WriteLine("Table: " + tableLogicalName);
-        AnsiConsole.WriteLine("Column: " + column.LogicalName);
-        AnsiConsole.WriteLine(
-            "This deletes the column and its stored data from the environment."
-        );
-        AnsiConsole.WriteLine(
-            "It does not only remove the column from this solution."
-        );
-        AnsiConsole.WriteLine(
-            "Type the full column logical name and press Enter. Esc cancels."
-        );
-        var entered = ReadConfirmationText();
-        return string.Equals(
-            entered,
-            column.LogicalName,
-            StringComparison.Ordinal
-        );
+        return new ConfirmationScreen(
+            "Delete column",
+            BuildOperationDetails(context, tableLogicalName, column.LogicalName),
+            [
+                "This deletes the column and its stored data.",
+                "It does not only remove the column from this solution."
+            ],
+            "Type the full column logical name to confirm.",
+            value => string.Equals(
+                value,
+                column.LogicalName,
+                StringComparison.Ordinal
+            )
+        ).Show();
     }
 
     private static bool ConfirmPublishTable(
@@ -882,78 +919,50 @@ internal static class Program
         string tableLogicalName
     )
     {
-        AnsiConsole.Clear();
-        AnsiConsole.WriteLine("Publish table");
-        AnsiConsole.WriteLine("Environment: " + context.EnvironmentUrl);
-        AnsiConsole.WriteLine("Solution: " + context.SolutionUniqueName);
-        AnsiConsole.WriteLine("Table: " + tableLogicalName);
-        AnsiConsole.WriteLine(
-            "This publishes pending customizations for this table, including "
-            + "changes made by other users."
-        );
-        AnsiConsole.WriteLine("Press Y then Enter to publish. Esc cancels.");
-        var entered = ReadConfirmationText();
-        return string.Equals(entered, "Y", StringComparison.OrdinalIgnoreCase)
-            || string.Equals(entered, "Yes", StringComparison.OrdinalIgnoreCase);
+        return new ConfirmationScreen(
+            "Publish table",
+            BuildOperationDetails(context, tableLogicalName, null),
+            [
+                "This publishes all pending table customizations, including",
+                "changes made by other users."
+            ],
+            "Type Y or Yes to publish.",
+            value => string.Equals(
+                value,
+                "Y",
+                StringComparison.OrdinalIgnoreCase
+            ) || string.Equals(
+                value,
+                "Yes",
+                StringComparison.OrdinalIgnoreCase
+            )
+        ).Show();
     }
 
-    private static string? ReadConfirmationText()
+    private static IReadOnlyList<(string Label, string Value)>
+        BuildOperationDetails(
+            SolutionWriteContext context,
+            string tableLogicalName,
+            string? columnLogicalName
+        )
     {
-        var value = new StringBuilder();
-        Console.Write("> ");
-        while( true )
+        var details = new List<(string Label, string Value)>
         {
-            var key = Console.ReadKey(intercept: true);
-            if( key.Key == ConsoleKey.Escape || key.KeyChar == '\u0003' )
-            {
-                Console.WriteLine();
-                return null;
-            }
-
-            if( key.Key == ConsoleKey.Enter )
-            {
-                Console.WriteLine();
-                return value.ToString();
-            }
-
-            if( key.Key == ConsoleKey.Backspace
-                || key.KeyChar == '\b'
-                || key.KeyChar == '\u007f' )
-            {
-                if( value.Length > 0 )
-                {
-                    value.Length--;
-                }
-
-                RenderConfirmationValue(value);
-                continue;
-            }
-
-            if( !char.IsControl(key.KeyChar) )
-            {
-                value.Append(key.KeyChar);
-                RenderConfirmationValue(value);
-            }
-        }
-    }
-
-    private static void RenderConfirmationValue(StringBuilder value)
-    {
-        Console.Write("\r> " + value + " ");
-    }
-
-    private static void WaitForConfirmationKey()
-    {
-        while( true )
+            ("Environment", context.EnvironmentUrl),
+            ("Solution", context.SolutionUniqueName),
+            ("Table", tableLogicalName)
+        };
+        if( columnLogicalName != null )
         {
-            var key = Console.ReadKey(intercept: true);
-            if( key.Key == ConsoleKey.Enter
-                || key.Key == ConsoleKey.Escape
-                || key.KeyChar == '\u0003' )
-            {
-                return;
-            }
+            details.Add(("Column", columnLogicalName));
         }
+
+        return details;
+    }
+
+    private static void ShowOperationResult(string title, string status)
+    {
+        MessageScreen.Show(title, [new Text(status)]);
     }
 
     private static void ConfigureWslBrowser()

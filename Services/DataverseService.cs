@@ -179,11 +179,34 @@ public class DataverseService : IDisposable
         );
         var metadata = response.EntityMetadata;
         VerifyEntityIdentity(metadata, logicalName, metadataId);
-        return new DataverseEntityDetails
+        return CreateEntityDetails(metadata);
+    }
+
+    public virtual async Task<DataverseEntityDetails>
+        GetEntityByLogicalNameAsync(
+            string logicalName,
+            CancellationToken cancellationToken
+        )
+    {
+        if( string.IsNullOrWhiteSpace(logicalName) )
         {
-            Entity = CreateEntity(metadata),
-            Fields = CreateFields(metadata)
+            throw new ArgumentException(
+                "A table logical name is required.",
+                nameof(logicalName)
+            );
+        }
+
+        var request = new RetrieveEntityRequest
+        {
+            EntityFilters = EntityFilters.Entity | EntityFilters.Attributes,
+            LogicalName = logicalName,
+            RetrieveAsIfPublished = true
         };
+        var response = (RetrieveEntityResponse)await _client.ExecuteAsync(
+            request,
+            cancellationToken
+        );
+        return CreateEntityDetails(response.EntityMetadata);
     }
 
     public virtual async Task<IReadOnlyList<DataverseColumn>> GetColumnsAsync(
@@ -538,6 +561,17 @@ public class DataverseService : IDisposable
             CanCreateAttributes = metadata.CanCreateAttributes?.Value,
             IsManaged = metadata.IsManaged,
             IsActivity = metadata.IsActivity
+        };
+    }
+
+    private static DataverseEntityDetails CreateEntityDetails(
+        EntityMetadata metadata
+    )
+    {
+        return new DataverseEntityDetails
+        {
+            Entity = CreateEntity(metadata),
+            Fields = CreateFields(metadata)
         };
     }
 

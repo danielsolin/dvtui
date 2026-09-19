@@ -433,6 +433,48 @@ def test_table_columns_navigates_and_deletes():
     print("table-columns navigation passed")
 
 
+def test_table_columns_edits_in_detail_pane():
+    master_fd, process = start_process("table-columns")
+    try:
+        data = read_until(master_fd, "2 columns")
+        data += read_available(master_fd, 0.3)
+        assert "new_custom" in data
+        press_key(master_fd, "E")
+        data += read_until(master_fd, "Editing new_custom")
+        data += read_available(master_fd, 0.5)
+        assert "Field" in data
+        assert "Display name" in data
+        assert "Ctrl+S: save" in data
+        press_key(master_fd, "\x13")
+        final = drain_until_exit(master_fd, process)
+        assert "savecolumn:new_custom" in final
+    finally:
+        stop_process(process)
+        os.close(master_fd)
+    print("table-columns inline edit passed")
+
+
+def test_confirmation_stays_in_tui():
+    master_fd, process = start_process("confirmation")
+    try:
+        data = read_until(master_fd, "Delete column")
+        data += read_available(master_fd, 0.3)
+        assert "Environment" in data
+        assert "new_custom" in data
+        for char in b"new_custom":
+            os.write(master_fd, bytes([char]))
+            time.sleep(0.03)
+        press_key(master_fd, "\r")
+        final = drain_until_exit(master_fd, process)
+        assert "confirmed" in final
+        assert "\x1b[?1049h" in data
+        assert "\x1b[?1049l" not in data
+    finally:
+        stop_process(process)
+        os.close(master_fd)
+    print("confirmation TUI lifecycle passed")
+
+
 def test_create_table_submits():
     master_fd, process = start_process("create-table")
     try:
@@ -538,6 +580,8 @@ def main():
         test_solution_browser_wide_tall_terminal,
         test_solution_browser_wide_tall_small_terminal,
         test_table_columns_navigates_and_deletes,
+        test_table_columns_edits_in_detail_pane,
+        test_confirmation_stays_in_tui,
         test_create_table_submits,
         test_create_table_can_cancel,
         test_column_editor_creates,

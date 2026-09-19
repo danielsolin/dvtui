@@ -17,8 +17,9 @@ builds that host, drives the real TUI in a pseudo-terminal, and checks:
 - Loading failures, retries, empty results, cancellation, and terminal reset.
 - Long names: every selection stays visible while moving through 75 tables,
   and clipping follows the current sidebar width.
-- Table columns screen: column listing with edit/delete capability flags,
+- Table columns screen: structured details, inline editing, capability flags,
   read-only reasons, and the delete action.
+- Confirmation dialogs stay inside the alternate-screen TUI lifecycle.
 - Create table screen: filling in the display name and submitting with Ctrl+S.
 - Column editor screen: creating and editing with Ctrl+S.
 - Managed-solution browsing with write actions disabled.

@@ -26,6 +26,8 @@ internal static class ServiceTests
         TestWriteContextLoadsPublisherAndLanguage();
         TestManagedWriteContextIsReadOnly();
         TestLoadColumnUsesBaseLanguage();
+        TestColumnReadbackUsesAttributeTypeCode();
+        TestColumnReadbackMapsFormatName();
         TestCreateTableBuildsRequest();
         TestCreateColumnMapsKind();
         TestCreateColumnTreatsMissingNameAsAvailable();
@@ -276,6 +278,41 @@ internal static class ServiceTests
         ).GetAwaiter().GetResult();
 
         Check(result == entityId, "create table returns entity id");
+    }
+
+    private static void TestColumnReadbackMapsFormatName()
+    {
+        var metadata = new StringAttributeMetadata
+        {
+            MetadataId = Guid.NewGuid(),
+            LogicalName = "new_text",
+            SchemaName = "new_text",
+            Format = StringFormat.Text,
+            FormatName = StringFormatName.Text
+        };
+        var column = DataverseSchemaService.CreateColumn(metadata);
+
+        Check(
+            column.AttributeFormat == "Text",
+            "column readback maps string format name"
+        );
+    }
+
+    private static void TestColumnReadbackUsesAttributeTypeCode()
+    {
+        var metadata = new AttributeMetadata
+        {
+            MetadataId = Guid.NewGuid(),
+            LogicalName = "new_text",
+            SchemaName = "new_text"
+        };
+        SetReadOnly(metadata, "AttributeType", AttributeTypeCode.String);
+        var column = DataverseSchemaService.CreateColumn(metadata);
+
+        Check(
+            column.Kind == ColumnKind.Text,
+            "column readback maps string attribute type"
+        );
     }
 
     private static void TestCreateColumnMapsKind()

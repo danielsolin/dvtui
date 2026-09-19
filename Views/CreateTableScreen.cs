@@ -437,7 +437,7 @@ internal sealed class CreateTableScreen : IFormScreen
     )
     {
         table.AddRow(
-            new Text(label, Style.Parse("grey")),
+            new Text(label, TuiColors.SecondaryText),
             new Text(DisplayValue(value))
         );
     }
