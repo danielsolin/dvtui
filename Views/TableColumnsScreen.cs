@@ -60,6 +60,11 @@ internal sealed class TableColumnsScreen
 
     public Task LoadAsync(CancellationToken cancellationToken)
     {
+        SessionLog.Info(
+            "UI.TableColumns",
+            "Loading columns table=" + _entity.LogicalName
+                + " metadataId=" + _entity.MetadataId
+        );
         var generation = Interlocked.Increment(ref _loadGeneration);
         _loading = true;
         _status = "Loading columns...";
@@ -274,6 +279,12 @@ internal sealed class TableColumnsScreen
                 );
             KeepSelectionVisible();
             _status = BuildColumnStatus();
+            SessionLog.Info(
+                "UI.TableColumns",
+                "Columns loaded table=" + _entity.LogicalName
+                    + " count=" + _columns.Count
+                    + " systemCount=" + _hiddenSystemColumnCount
+            );
             Touch();
         }
         catch( OperationCanceledException )
@@ -282,6 +293,11 @@ internal sealed class TableColumnsScreen
         }
         catch( Exception ex )
         {
+            SessionLog.Exception(
+                "UI.TableColumns",
+                ex,
+                "Loading columns failed table=" + _entity.LogicalName
+            );
             if( generation == Volatile.Read(ref _loadGeneration) )
             {
                 _status = ex.Message;
@@ -300,6 +316,10 @@ internal sealed class TableColumnsScreen
 
     private void BeginCreate()
     {
+        SessionLog.Info(
+            "UI.TableColumns",
+            "Create column action selected table=" + _entity.LogicalName
+        );
         var capability = GetTableCapability();
         if( !capability.CanCreateColumn )
         {
@@ -315,6 +335,10 @@ internal sealed class TableColumnsScreen
 
     private void BeginEdit()
     {
+        SessionLog.Info(
+            "UI.TableColumns",
+            "Edit column action selected index=" + _selectedIndex
+        );
         if( IsWriteDisabled(out var writeReason) )
         {
             _status = writeReason;
@@ -351,6 +375,10 @@ internal sealed class TableColumnsScreen
 
     private void BeginDelete()
     {
+        SessionLog.Info(
+            "UI.TableColumns",
+            "Delete column action selected index=" + _selectedIndex
+        );
         if( IsWriteDisabled(out var writeReason) )
         {
             _status = writeReason;
@@ -379,6 +407,10 @@ internal sealed class TableColumnsScreen
 
     private void BeginPublish()
     {
+        SessionLog.Info(
+            "UI.TableColumns",
+            "Publish action selected table=" + _entity.LogicalName
+        );
         if( IsWriteDisabled(out var writeReason) )
         {
             _status = writeReason;

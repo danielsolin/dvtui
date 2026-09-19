@@ -1,4 +1,5 @@
 using dvtui.Models;
+using dvtui.Services;
 
 using Spectre.Console;
 using Spectre.Console.Rendering;
@@ -43,12 +44,17 @@ internal sealed class SolutionSelectionScreen
 
         var screen = new SolutionSelectionScreen(load);
         var selected = new DataverseSolution?[1];
+        SessionLog.Info("UI.SolutionSelection", "Screen started");
         AnsiConsole.Clear();
         AnsiConsole.Live(screen.Render())
             .StartAsync(context => screen.RunAsync(context, selected))
             .GetAwaiter()
             .GetResult();
 
+        SessionLog.Info(
+            "UI.SolutionSelection",
+            "Screen completed selected=" + (selected[0]?.UniqueName ?? "none")
+        );
         return selected[0];
     }
 
@@ -75,6 +81,11 @@ internal sealed class SolutionSelectionScreen
                 while( Console.KeyAvailable )
                 {
                     var key = Console.ReadKey(intercept: true);
+                    SessionLog.Key(
+                        "SolutionSelectionScreen",
+                        key,
+                        "pendingLoad=" + (pendingLoad != null)
+                    );
                     if( key.Key == ConsoleKey.Q
                         || key.Key == ConsoleKey.Escape
                         || key.KeyChar == '\u0003' )
@@ -165,12 +176,21 @@ internal sealed class SolutionSelectionScreen
             _status = _solutions.Count == 0
                 ? "No visible solutions found. R: reload | Q: quit"
                 : $"{_solutions.Count} visible solutions | Enter: open";
+            SessionLog.Info(
+                "UI.SolutionSelection",
+                "Loaded solutions count=" + _solutions.Count
+            );
         }
         catch( OperationCanceledException ) when( cancellationToken.IsCancellationRequested )
         {
         }
         catch( Exception ex )
         {
+            SessionLog.Exception(
+                "UI.SolutionSelection",
+                ex,
+                "Loading solutions failed"
+            );
             _loadFailed = true;
             _solutions = [];
             _status = "Could not load solutions. R: retry | Q: quit";

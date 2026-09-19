@@ -1,5 +1,7 @@
 using System.Globalization;
+using System.Net.Http;
 using System.Text;
+using System.Text.Json.Nodes;
 using dvtui.Models;
 
 using Microsoft.PowerPlatform.Dataverse.Client;
@@ -53,8 +55,18 @@ public sealed class DataverseSchemaService
         CancellationToken cancellationToken
     )
     {
+        SessionLog.Info(
+            "Schema.LoadWriteContext",
+            "Started solution=" + solution.UniqueName
+                + " id=" + solution.Id
+                + " managed=" + solution.IsManaged
+        );
         if( solution.IsManaged == true )
         {
+            SessionLog.Warning(
+                "Schema.LoadWriteContext",
+                "Writes disabled because solution is managed"
+            );
             return CreateReadOnlyContext(
                 solution,
                 ColumnCapabilityPolicy.ReasonManagedSolution
@@ -63,6 +75,10 @@ public sealed class DataverseSchemaService
 
         if( solution.IsManaged != false )
         {
+            SessionLog.Warning(
+                "Schema.LoadWriteContext",
+                "Writes disabled because solution management state is unknown"
+            );
             return CreateReadOnlyContext(
                 solution,
                 "Solution management state is unknown; writes are disabled."
@@ -127,7 +143,7 @@ public sealed class DataverseSchemaService
         var baseLanguage = languageCode
             .ToString(CultureInfo.InvariantCulture);
 
-        return new SolutionWriteContext
+        var context = new SolutionWriteContext
         {
             SolutionId = solution.Id,
             SolutionUniqueName = solution.UniqueName,
@@ -138,6 +154,14 @@ public sealed class DataverseSchemaService
             BaseLanguage = baseLanguage,
             EnvironmentUrl = _environmentUrl
         };
+        SessionLog.Info(
+            "Schema.LoadWriteContext",
+            "Completed solution=" + solution.UniqueName
+                + " publisherId=" + context.PublisherId
+                + " prefix=" + context.PublisherPrefix
+                + " baseLanguage=" + context.BaseLanguage
+        );
+        return context;
     }
 
     private SolutionWriteContext CreateReadOnlyContext(
@@ -164,13 +188,26 @@ public sealed class DataverseSchemaService
         string? baseLanguage = null
     )
     {
+        SessionLog.Info(
+            "Schema.LoadColumnDefinition",
+            "Started table=" + tableLogicalName
+                + " column=" + columnLogicalName
+                + " published=" + retrieveAsIfPublished
+        );
         var metadata = await LoadAttributeMetadataAsync(
             tableLogicalName,
             columnLogicalName,
             retrieveAsIfPublished,
             cancellationToken
         );
-        return CreateColumn(metadata, ParseBaseLanguage(baseLanguage));
+        var result = CreateColumn(metadata, ParseBaseLanguage(baseLanguage));
+        SessionLog.Info(
+            "Schema.LoadColumnDefinition",
+            "Completed table=" + tableLogicalName
+                + " column=" + columnLogicalName
+                + " metadataId=" + result.MetadataId
+        );
+        return result;
     }
 
     private async Task<AttributeMetadata> LoadAttributeMetadataAsync(
@@ -265,6 +302,11 @@ public sealed class DataverseSchemaService
         CancellationToken cancellationToken
     )
     {
+        SessionLog.Info(
+            "Schema.CreateTable",
+            "Started solution=" + request.Context.SolutionUniqueName
+                + " schemaSuffix=" + request.SchemaSuffix
+        );
         RequireWriteContext(request.Context);
         var context = request.Context;
         EnsureWriteAllowed(context);
@@ -282,6 +324,11 @@ public sealed class DataverseSchemaService
             request.PrimaryNameSchemaSuffix
         );
         await EnsureTableNameAvailableAsync(logicalName, cancellationToken);
+        SessionLog.Debug(
+            "Schema.CreateTable",
+            "Validated logicalName=" + logicalName
+                + " primaryName=" + primaryName
+        );
 
         var entityMetadata = new EntityMetadata
         {
@@ -357,6 +404,11 @@ public sealed class DataverseSchemaService
             );
         }
 
+        SessionLog.Info(
+            "Schema.CreateTable",
+            "Completed logicalName=" + logicalName
+                + " entityId=" + response.EntityId
+        );
         return response.EntityId;
     }
 
@@ -365,6 +417,12 @@ public sealed class DataverseSchemaService
         CancellationToken cancellationToken
     )
     {
+        SessionLog.Info(
+            "Schema.CreateColumn",
+            "Started table=" + request.TableLogicalName
+                + " schemaSuffix=" + request.SchemaSuffix
+                + " kind=" + request.Kind
+        );
         RequireWriteContext(request.Context);
         var context = request.Context;
         EnsureWriteAllowed(context);
@@ -467,6 +525,12 @@ public sealed class DataverseSchemaService
             );
         }
 
+        SessionLog.Info(
+            "Schema.CreateColumn",
+            "Completed table=" + request.TableLogicalName
+                + " logicalName=" + schemaName
+                + " attributeId=" + response.AttributeId
+        );
         return response.AttributeId;
     }
 
@@ -475,6 +539,12 @@ public sealed class DataverseSchemaService
         CancellationToken cancellationToken
     )
     {
+        SessionLog.Info(
+            "Schema.UpdateColumn",
+            "Started table=" + request.TableLogicalName
+                + " column=" + request.ColumnLogicalName
+                + " expectedMetadataId=" + request.ExpectedMetadataId
+        );
         RequireWriteContext(request.Context);
         var context = request.Context;
         EnsureWriteAllowed(context);
@@ -492,7 +562,7 @@ public sealed class DataverseSchemaService
             await LoadEntityMetadataAsync(
                 request.TableLogicalName,
                 request.TableMetadataId,
-                retrieveAsIfPublished: false,
+                retrieveAsIfPublished: true,
                 cancellationToken
             );
         }
@@ -500,7 +570,7 @@ public sealed class DataverseSchemaService
         var freshMetadata = await LoadAttributeMetadataAsync(
             request.TableLogicalName,
             request.ColumnLogicalName,
-            retrieveAsIfPublished: false,
+            retrieveAsIfPublished: true,
             cancellationToken
         );
         var fresh = CreateColumn(
@@ -626,6 +696,11 @@ public sealed class DataverseSchemaService
 
         if( !changed )
         {
+            SessionLog.Info(
+                "Schema.UpdateColumn",
+                "No changes table=" + request.TableLogicalName
+                    + " column=" + request.ColumnLogicalName
+            );
             return new ColumnUpdateResult
             {
                 MetadataId = fresh.MetadataId,
@@ -654,6 +729,34 @@ public sealed class DataverseSchemaService
         };
 
         await _client.ExecuteAsync(sdkRequest, cancellationToken);
+        if( request.SetRequirementLevel )
+        {
+            try
+            {
+                await UpdateRequirementLevelViaWebApiAsync(
+                    request,
+                    requirement ?? RequirementLevels.Optional,
+                    context,
+                    cancellationToken
+                );
+            }
+            catch( OperationCanceledException )
+                when( cancellationToken.IsCancellationRequested )
+            {
+                throw;
+            }
+            catch( Exception ex )
+            {
+                throw new SchemaWriteOutcomeUnknownException(
+                    "Column requirement update for ID " + fresh.MetadataId
+                        + " was sent, but the Web API fallback failed: "
+                        + ex.Message,
+                    fresh.MetadataId,
+                    ex
+                );
+            }
+        }
+
         try
         {
             await VerifyUpdatedColumnAsync(
@@ -681,11 +784,18 @@ public sealed class DataverseSchemaService
             );
         }
 
-        return new ColumnUpdateResult
+        var result = new ColumnUpdateResult
         {
             MetadataId = fresh.MetadataId,
             Changed = true
         };
+        SessionLog.Info(
+            "Schema.UpdateColumn",
+            "Completed table=" + request.TableLogicalName
+                + " column=" + request.ColumnLogicalName
+                + " metadataId=" + result.MetadataId
+        );
+        return result;
     }
 
     public async Task<IReadOnlyList<DependencyInfo>>
@@ -694,6 +804,10 @@ public sealed class DataverseSchemaService
         CancellationToken cancellationToken
     )
     {
+        SessionLog.Info(
+            "Schema.GetDependencies",
+            "Started metadataId=" + columnMetadataId
+        );
         if( columnMetadataId == Guid.Empty )
         {
             throw new ArgumentException(
@@ -739,6 +853,11 @@ public sealed class DataverseSchemaService
             });
         }
 
+        SessionLog.Info(
+            "Schema.GetDependencies",
+            "Completed metadataId=" + columnMetadataId
+                + " count=" + dependencies.Count
+        );
         return dependencies;
     }
 
@@ -751,6 +870,12 @@ public sealed class DataverseSchemaService
         SolutionWriteContext? context = null
     )
     {
+        SessionLog.Info(
+            "Schema.DeleteColumn",
+            "Started table=" + tableLogicalName
+                + " column=" + columnLogicalName
+                + " expectedMetadataId=" + expectedMetadataId
+        );
         RequireWriteContext(context);
         if( context != null )
         {
@@ -772,7 +897,7 @@ public sealed class DataverseSchemaService
             await LoadEntityMetadataAsync(
                 tableLogicalName,
                 tableMetadataId,
-                retrieveAsIfPublished: false,
+                retrieveAsIfPublished: true,
                 cancellationToken
             );
         }
@@ -780,7 +905,7 @@ public sealed class DataverseSchemaService
         var fresh = await LoadColumnDefinitionAsync(
             tableLogicalName,
             columnLogicalName,
-            retrieveAsIfPublished: false,
+            retrieveAsIfPublished: true,
             cancellationToken
         );
         if( expectedMetadataId == Guid.Empty )
@@ -848,6 +973,11 @@ public sealed class DataverseSchemaService
                 ex
             );
         }
+        SessionLog.Info(
+            "Schema.DeleteColumn",
+            "Completed table=" + tableLogicalName
+                + " column=" + columnLogicalName
+        );
     }
 
     private async Task VerifyColumnDeletedAsync(
@@ -861,7 +991,7 @@ public sealed class DataverseSchemaService
             await LoadAttributeMetadataAsync(
                 tableLogicalName,
                 columnLogicalName,
-                retrieveAsIfPublished: false,
+                retrieveAsIfPublished: true,
                 cancellationToken
             );
         }
@@ -908,6 +1038,11 @@ public sealed class DataverseSchemaService
         Guid tableMetadataId = default
     )
     {
+        SessionLog.Info(
+            "Schema.PublishTable",
+            "Started table=" + tableLogicalName
+                + " metadataId=" + tableMetadataId
+        );
         RequireWriteContext(context);
         if( context != null )
         {
@@ -922,7 +1057,7 @@ public sealed class DataverseSchemaService
             await LoadEntityMetadataAsync(
                 tableLogicalName,
                 tableMetadataId,
-                retrieveAsIfPublished: false,
+                retrieveAsIfPublished: true,
                 cancellationToken
             );
         }
@@ -934,6 +1069,10 @@ public sealed class DataverseSchemaService
         };
 
         await _client.ExecuteAsync(request, cancellationToken);
+        SessionLog.Info(
+            "Schema.PublishTable",
+            "Completed table=" + tableLogicalName
+        );
     }
 
     public async Task DeleteTableAsync(
@@ -942,12 +1081,21 @@ public sealed class DataverseSchemaService
         CancellationToken cancellationToken
     )
     {
+        SessionLog.Info(
+            "Schema.DeleteTable",
+            "Started table=" + tableLogicalName
+                + " metadataId=" + tableMetadataId
+        );
         var request = new DeleteEntityRequest
         {
             LogicalName = tableLogicalName
         };
 
         await _client.ExecuteAsync(request, cancellationToken);
+        SessionLog.Info(
+            "Schema.DeleteTable",
+            "Completed table=" + tableLogicalName
+        );
     }
 
     private static void EnsureWriteAllowed(SolutionWriteContext context)
@@ -1323,6 +1471,308 @@ public sealed class DataverseSchemaService
         return response.AttributeMetadata;
     }
 
+    private async Task UpdateRequirementLevelViaWebApiAsync(
+        UpdateColumnRequest request,
+        string requirement,
+        SolutionWriteContext context,
+        CancellationToken cancellationToken
+    )
+    {
+        if( request.TableMetadataId == Guid.Empty )
+        {
+            SessionLog.Debug(
+                "Schema.UpdateColumn",
+                "Web API requirement fallback skipped without table metadata ID"
+            );
+            return;
+        }
+
+        if( _client is not IDataverseWebExecutor webExecutor )
+        {
+            SessionLog.Debug(
+                "Schema.UpdateColumn",
+                "Web API requirement fallback unavailable for test executor"
+            );
+            return;
+        }
+
+        var retrievePath = BuildRetrieveEntityPath(
+            request.TableLogicalName,
+            request.TableMetadataId
+        );
+        using var retrieveResponse =
+            await webExecutor.ExecuteWebRequestAsync(
+                HttpMethod.Get,
+                retrievePath,
+                string.Empty,
+                CreateWebApiHeaders(),
+                "application/json",
+                cancellationToken
+            );
+        var retrieveBody = await retrieveResponse.Content.ReadAsStringAsync(
+            cancellationToken
+        );
+        EnsureWebApiSuccess(retrieveResponse, retrieveBody, "metadata read");
+
+        var document = JsonNode.Parse(retrieveBody) as JsonObject
+            ?? throw new InvalidOperationException(
+                "The metadata read returned invalid JSON."
+            );
+        var entity = GetObject(document, "EntityMetadata")
+            ?? throw new InvalidOperationException(
+                "The metadata read did not return EntityMetadata."
+            );
+        var entityId = GetGuid(entity, "MetadataId");
+        if( entityId != request.TableMetadataId )
+        {
+            throw new ColumnConflictException(
+                "The selected table identity changed; reload before writing."
+            );
+        }
+
+        var attribute = FindAttribute(
+            entity,
+            request.ColumnLogicalName,
+            request.ExpectedMetadataId
+        );
+        if( attribute == null )
+        {
+            throw new ColumnConflictException(
+                "The selected column was not returned by the metadata read."
+            );
+        }
+
+        var currentRequirement = GetObject(attribute, "RequiredLevel")
+            ?? new JsonObject();
+        var previousValue = GetString(currentRequirement, "Value") ?? "<missing>";
+        currentRequirement["Value"] = ToWebApiRequirementLevel(requirement);
+        if( GetNode(currentRequirement, "CanBeChanged") == null )
+        {
+            currentRequirement["CanBeChanged"] = true;
+        }
+
+        if( GetNode(currentRequirement, "ManagedPropertyLogicalName") == null )
+        {
+            currentRequirement["ManagedPropertyLogicalName"] =
+                "canmodifyrequirementlevelsettings";
+        }
+
+        attribute["RequiredLevel"] = currentRequirement;
+        if( GetNode(attribute, "@odata.type") == null )
+        {
+            throw new InvalidOperationException(
+                "The metadata read did not return a type-specific column definition."
+            );
+        }
+        NormalizeWebApiAttributeType(attribute);
+
+        SessionLog.Debug(
+            "Schema.UpdateColumn",
+            "Web API requirement update table=" + request.TableLogicalName
+                + " column=" + request.ColumnLogicalName
+                + " previous=" + previousValue
+                + " requested=" + requirement
+        );
+
+        var updatePath = BuildAttributePath(
+            request.TableLogicalName,
+            request.ColumnLogicalName
+        );
+        var updateBody = attribute.ToJsonString();
+        using var updateResponse =
+            await webExecutor.ExecuteWebRequestAsync(
+                HttpMethod.Put,
+                updatePath,
+                updateBody,
+                CreateWebApiHeaders(context.SolutionUniqueName),
+                "application/json",
+                cancellationToken
+            );
+        var responseBody = await updateResponse.Content.ReadAsStringAsync(
+            cancellationToken
+        );
+        EnsureWebApiSuccess(updateResponse, responseBody, "metadata update");
+        SessionLog.Info(
+            "Schema.UpdateColumn",
+            "Web API requirement update completed table="
+                + request.TableLogicalName
+                + " column=" + request.ColumnLogicalName
+        );
+    }
+
+    private static string BuildRetrieveEntityPath(
+        string tableLogicalName,
+        Guid tableMetadataId
+    )
+    {
+        var filter = Uri.EscapeDataString(
+            "Microsoft.Dynamics.CRM.EntityFilters'Attributes'"
+        );
+        var logicalName = Uri.EscapeDataString(
+            "'" + EscapeODataString(tableLogicalName) + "'"
+        );
+        var metadataId = Uri.EscapeDataString(
+            tableMetadataId.ToString()
+        );
+        return "RetrieveEntity(EntityFilters=@filters,LogicalName=@logicalName,"
+            + "MetadataId=@metadataId,RetrieveAsIfPublished=@published)"
+            + "?@filters=" + filter
+            + "&@logicalName=" + logicalName
+            + "&@metadataId=" + metadataId
+            + "&@published=true";
+    }
+
+    private static string BuildAttributePath(
+        string tableLogicalName,
+        string columnLogicalName
+    )
+    {
+        return "EntityDefinitions(LogicalName='"
+            + EscapeODataString(tableLogicalName)
+            + "')/Attributes(LogicalName='"
+            + EscapeODataString(columnLogicalName)
+            + "')";
+    }
+
+    private static Dictionary<string, List<string>> CreateWebApiHeaders(
+        string? solutionUniqueName = null
+    )
+    {
+        var headers = new Dictionary<string, List<string>>
+        {
+            ["Accept"] = ["application/json"],
+            ["OData-MaxVersion"] = ["4.0"],
+            ["OData-Version"] = ["4.0"],
+            ["If-None-Match"] = ["null"]
+        };
+        if( !string.IsNullOrWhiteSpace(solutionUniqueName) )
+        {
+            headers["MSCRM.SolutionUniqueName"] = [solutionUniqueName];
+            headers["MSCRM.MergeLabels"] = ["true"];
+        }
+
+        return headers;
+    }
+
+    private static void EnsureWebApiSuccess(
+        HttpResponseMessage response,
+        string body,
+        string operation
+    )
+    {
+        if( response.IsSuccessStatusCode )
+        {
+            return;
+        }
+
+        throw new InvalidOperationException(
+            "Dataverse Web API " + operation + " failed with HTTP "
+                + (int)response.StatusCode + " " + response.ReasonPhrase
+                + ": " + SessionLog.SafeSingleLine(body)
+        );
+    }
+
+    private static JsonObject? FindAttribute(
+        JsonObject entity,
+        string logicalName,
+        Guid metadataId
+    )
+    {
+        var attributes = GetNode(entity, "Attributes") as JsonArray;
+        if( attributes == null )
+        {
+            return null;
+        }
+
+        foreach( var item in attributes )
+        {
+            if( item is not JsonObject attribute )
+            {
+                continue;
+            }
+
+            var candidateId = GetGuid(attribute, "MetadataId");
+            var candidateName = GetString(attribute, "LogicalName");
+            if( candidateId == metadataId
+                || string.Equals(
+                    candidateName,
+                    logicalName,
+                    StringComparison.OrdinalIgnoreCase
+                ) )
+            {
+                return attribute;
+            }
+        }
+
+        return null;
+    }
+
+    private static JsonObject? GetObject(JsonObject parent, string name)
+    {
+        return GetNode(parent, name) as JsonObject;
+    }
+
+    private static JsonNode? GetNode(JsonObject parent, string name)
+    {
+        foreach( var pair in parent )
+        {
+            if( string.Equals(pair.Key, name, StringComparison.OrdinalIgnoreCase) )
+            {
+                return pair.Value;
+            }
+        }
+
+        return null;
+    }
+
+    private static string? GetString(JsonObject parent, string name)
+    {
+        return GetNode(parent, name)?.GetValue<string>();
+    }
+
+    private static Guid GetGuid(JsonObject parent, string name)
+    {
+        var value = GetString(parent, name);
+        return Guid.TryParse(value, out var id) ? id : Guid.Empty;
+    }
+
+    private static string ToWebApiRequirementLevel(string requirement)
+    {
+        return requirement switch
+        {
+            RequirementLevels.Recommended => "Recommended",
+            RequirementLevels.Required => "ApplicationRequired",
+            _ => "None"
+        };
+    }
+
+    private static void NormalizeWebApiAttributeType(JsonObject attribute)
+    {
+        var type = GetString(attribute, "@odata.type");
+        if( string.IsNullOrWhiteSpace(type) )
+        {
+            return;
+        }
+
+        const string prefix = "Microsoft.Dynamics.CRM.";
+        var shortName = type.StartsWith("#" + prefix, StringComparison.Ordinal)
+            ? type[(prefix.Length + 1)..]
+            : type.StartsWith(prefix, StringComparison.Ordinal)
+                ? type[prefix.Length..]
+                : type;
+        if( shortName.StartsWith("Complex", StringComparison.Ordinal) )
+        {
+            shortName = shortName["Complex".Length..];
+        }
+
+        attribute["@odata.type"] = prefix + shortName;
+    }
+
+    private static string EscapeODataString(string value)
+    {
+        return value.Replace("'", "''", StringComparison.Ordinal);
+    }
+
     private async Task VerifyUpdatedColumnAsync(
         UpdateColumnRequest request,
         string displayName,
@@ -1341,37 +1791,107 @@ public sealed class DataverseSchemaService
         var metadata = await LoadAttributeMetadataAsync(
             request.TableLogicalName,
             request.ColumnLogicalName,
-            retrieveAsIfPublished: false,
+            retrieveAsIfPublished: true,
             cancellationToken
         );
         var actual = CreateColumn(metadata);
         var language = int.Parse(baseLanguage, CultureInfo.InvariantCulture);
-        if( actual.MetadataId != request.ExpectedMetadataId
-            || (request.SetDisplayName
-                && !string.Equals(
-                    GetLabelForLanguage(metadata.DisplayName, language),
-                    displayName,
-                    StringComparison.Ordinal
-                ))
-            || (request.SetDescription
-                && !string.Equals(
-                    GetLabelForLanguage(metadata.Description, language),
-                    description,
-                    StringComparison.Ordinal
-                ))
-            || (request.NewMaxLength.HasValue
-                && actual.MaxLength != maxLength)
-            || (request.SetRequirementLevel
-                && !string.Equals(
-                    actual.RequirementLevel,
-                    requirement,
-                    StringComparison.Ordinal
-                )) )
+        var actualDisplayName = GetLabelForLanguage(metadata.DisplayName, language);
+        var actualDescription = GetLabelForLanguage(metadata.Description, language);
+        SessionLog.Debug(
+            "Schema.UpdateColumn",
+            "Readback values table=" + request.TableLogicalName
+                + " column=" + request.ColumnLogicalName
+                + " metadataId=" + actual.MetadataId
+                + " displayName=" + FormatVerificationValue(actualDisplayName)
+                + " description=" + FormatVerificationValue(actualDescription)
+                + " maxLength=" + FormatVerificationValue(actual.MaxLength)
+                + " requirement=" + FormatVerificationValue(actual.RequirementLevel)
+                + " requested=displayName:" + request.SetDisplayName
+                + ",description:" + request.SetDescription
+                + ",maxLength:" + request.NewMaxLength.HasValue
+                + ",requirement:" + request.SetRequirementLevel
+        );
+
+        var mismatches = new List<string>();
+        if( actual.MetadataId != request.ExpectedMetadataId )
         {
+            mismatches.Add(
+                "metadataId expected=" + request.ExpectedMetadataId
+                    + " actual=" + actual.MetadataId
+            );
+        }
+
+        if( request.SetDisplayName
+            && !string.Equals(
+                actualDisplayName,
+                displayName,
+                StringComparison.Ordinal
+            ) )
+        {
+            mismatches.Add(
+                "displayName expected=" + FormatVerificationValue(displayName)
+                    + " actual=" + FormatVerificationValue(actualDisplayName)
+            );
+        }
+
+        if( request.SetDescription
+            && !string.Equals(
+                actualDescription,
+                description,
+                StringComparison.Ordinal
+            ) )
+        {
+            mismatches.Add(
+                "description expected=" + FormatVerificationValue(description)
+                    + " actual=" + FormatVerificationValue(actualDescription)
+            );
+        }
+
+        if( request.NewMaxLength.HasValue
+            && actual.MaxLength != maxLength )
+        {
+            mismatches.Add(
+                "maxLength expected=" + FormatVerificationValue(maxLength)
+                    + " actual=" + FormatVerificationValue(actual.MaxLength)
+            );
+        }
+
+        if( request.SetRequirementLevel
+            && !string.Equals(
+                actual.RequirementLevel,
+                requirement,
+                StringComparison.Ordinal
+            ) )
+        {
+            mismatches.Add(
+                "requirement expected=" + FormatVerificationValue(requirement)
+                    + " actual=" + FormatVerificationValue(actual.RequirementLevel)
+            );
+        }
+
+        if( mismatches.Count > 0 )
+        {
+            SessionLog.Warning(
+                "Schema.UpdateColumn",
+                "Readback mismatch table=" + request.TableLogicalName
+                    + " column=" + request.ColumnLogicalName
+                    + " mismatches=[" + string.Join(" | ", mismatches) + "]"
+            );
             throw new ColumnConflictException(
                 "Column was saved, but the requested values could not be verified."
             );
         }
+    }
+
+    private static string FormatVerificationValue(string? value)
+    {
+        return "\"" + SessionLog.SafeSingleLine(value ?? "<null>") + "\"";
+    }
+
+    private static string FormatVerificationValue(int? value)
+    {
+        return value?.ToString(CultureInfo.InvariantCulture) ?? "<null>";
     }
 
     private static string BuildSchemaName(string prefix, string suffix)
@@ -1791,7 +2311,17 @@ public sealed class DataverseSchemaService
         }
         if( setRequirementLevel )
         {
-            metadata.RequiredLevel = ParseRequirementLevel(requirementLevel);
+            var parsedRequirement = ParseRequirementLevel(requirementLevel);
+            var currentRequirement = metadata.RequiredLevel;
+            if( currentRequirement == null )
+            {
+                metadata.RequiredLevel = parsedRequirement;
+            }
+            else
+            {
+                currentRequirement.Value = parsedRequirement.Value;
+                currentRequirement.IsValueModified = true;
+            }
         }
 
         if( newMaxLength.HasValue )

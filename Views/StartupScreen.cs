@@ -1,3 +1,5 @@
+using dvtui.Services;
+
 using Spectre.Console;
 using Spectre.Console.Rendering;
 
@@ -38,9 +40,18 @@ internal sealed class StartupScreen
         var screen = new StartupScreen(initialUrl);
         try
         {
+            SessionLog.Info(
+                "UI.Startup",
+                "Startup form shown initialUrl=" + initialUrl
+            );
             AnsiConsole.Clear();
-            return AnsiConsole.Live(screen.Render())
+            var connected = AnsiConsole.Live(screen.Render())
                 .Start(context => screen.Run(context, connect));
+            SessionLog.Info(
+                "UI.Startup",
+                "Startup form completed connected=" + connected
+            );
+            return connected;
         }
         finally
         {
@@ -66,6 +77,11 @@ internal sealed class StartupScreen
                 }
                 catch( Exception ex )
                 {
+                    SessionLog.Exception(
+                        "UI.Startup",
+                        ex,
+                        "Connection task failed"
+                    );
                     _message = $"Connection failed: {ex.Message}";
                     ReleaseConnection();
                     refresh = true;
@@ -75,6 +91,11 @@ internal sealed class StartupScreen
             while( Console.KeyAvailable )
             {
                 var key = Console.ReadKey(intercept: true);
+                SessionLog.Key(
+                    "StartupScreen",
+                    key,
+                    "connecting=" + (_connection != null)
+                );
                 if( key.Key == ConsoleKey.Q || key.KeyChar == '\u0003' )
                 {
                     _connectionCancellation?.Cancel();
@@ -125,10 +146,18 @@ internal sealed class StartupScreen
             || string.IsNullOrWhiteSpace(uri.Host)
             || !string.IsNullOrEmpty(uri.UserInfo) )
         {
+            SessionLog.Warning(
+                "UI.Startup",
+                "Rejected invalid connection URL value=" + url
+            );
             _message = "Enter a valid HTTPS Dataverse URL.";
             return;
         }
 
+        SessionLog.Info(
+            "UI.Startup",
+            "Starting connection task environment=" + uri.AbsoluteUri
+        );
         var connectionCancellation = new CancellationTokenSource();
         _connectionCancellation = connectionCancellation;
         _connection = Task.Run(
@@ -147,6 +176,10 @@ internal sealed class StartupScreen
     private void StopConnection()
     {
         var connection = _connection;
+        SessionLog.Debug(
+            "UI.Startup",
+            "Stopping connection task active=" + (connection != null)
+        );
         _connectionCancellation?.Cancel();
         if( connection == null )
         {

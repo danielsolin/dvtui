@@ -146,6 +146,12 @@ internal sealed class CreateTableScreen : IFormScreen
 
     public async Task SubmitAsync(CancellationToken cancellationToken)
     {
+        SessionLog.Info(
+            "UI.CreateTable",
+            "Submit started displayName=" + _displayName
+                + " schemaSuffix=" + _schemaSuffix
+                + " primaryNameSuffix=" + _primaryNameSuffix
+        );
         _submitting = true;
         _hasError = false;
         _status = "Creating table...";
@@ -155,6 +161,10 @@ internal sealed class CreateTableScreen : IFormScreen
             var validationError = Validate();
             if( validationError != null )
             {
+                SessionLog.Warning(
+                    "UI.CreateTable",
+                    "Validation failed message=" + validationError
+                );
                 _status = validationError;
                 _hasError = true;
                 Touch();
@@ -183,12 +193,20 @@ internal sealed class CreateTableScreen : IFormScreen
                 request,
                 cancellationToken
             );
+            SessionLog.Info(
+                "UI.CreateTable",
+                "Submit succeeded tableId=" + tableId
+            );
             _status = "Table created. ID: " + tableId;
             Touch();
         }
         catch( OperationCanceledException )
             when( cancellationToken.IsCancellationRequested )
         {
+            SessionLog.Warning(
+                "UI.CreateTable",
+                "Submit cancelled after dispatch"
+            );
             MarkOutcomeUnknown(
                 "Operation cancelled after dispatch; verify before retrying."
             );
@@ -196,11 +214,17 @@ internal sealed class CreateTableScreen : IFormScreen
         }
         catch( SchemaWriteOutcomeUnknownException ex )
         {
+            SessionLog.Exception(
+                "UI.CreateTable",
+                ex,
+                "Submit outcome unknown"
+            );
             MarkOutcomeUnknown(ex.Message);
             Touch();
         }
         catch( Exception ex )
         {
+            SessionLog.Exception("UI.CreateTable", ex, "Submit failed");
             _status = ex.Message;
             _hasError = true;
             Touch();

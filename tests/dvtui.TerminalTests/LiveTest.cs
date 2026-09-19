@@ -8,6 +8,8 @@ internal static class LiveTest
 {
     public static int Run(string[] args)
     {
+        SessionLog.Start(args);
+        Console.WriteLine("Session log: " + (SessionLog.FilePath ?? "unavailable"));
         var url = args.Length > 0 ? args[0] : null;
         if( string.IsNullOrWhiteSpace(url) )
         {
@@ -72,14 +74,15 @@ internal static class LiveTest
         }
         catch( Exception ex )
         {
-            Console.Error.WriteLine("Live test failed: " + ex.Message);
-            ledger.Add("error", ex.Message);
+            Console.Error.WriteLine("Live test failed: " + ex);
+            ledger.Add("error", ex.ToString());
             return 1;
         }
         finally
         {
             service.Dispose();
             ledger.Flush();
+            SessionLog.Stop();
         }
     }
 
@@ -179,7 +182,7 @@ internal static class LiveTest
             var fresh = schema.LoadColumnDefinitionAsync(
                 tableLogicalName,
                 columnLogicalName,
-                retrieveAsIfPublished: false,
+                retrieveAsIfPublished: true,
                 CancellationToken.None
             ).GetAwaiter().GetResult();
             if( fresh.MetadataId != columnId
@@ -221,7 +224,7 @@ internal static class LiveTest
             }
             Console.WriteLine("Listed column is editable text.");
 
-            var updateResult = schema.UpdateColumnAsync(
+            var requirementResult = schema.UpdateColumnAsync(
                 new UpdateColumnRequest
                 {
                     Context = context,
@@ -229,13 +232,48 @@ internal static class LiveTest
                     TableMetadataId = tableId,
                     ColumnLogicalName = columnLogicalName,
                     ExpectedMetadataId = fresh.MetadataId,
+                    SetRequirementLevel = true,
+                    RequirementLevel = RequirementLevels.Recommended
+                },
+                CancellationToken.None
+            ).GetAwaiter().GetResult();
+            if( !requirementResult.Changed )
+            {
+                throw new InvalidOperationException(
+                    "Requirement level update reported no change."
+                );
+            }
+
+            var unpublishedRequirement = schema.LoadColumnDefinitionAsync(
+                tableLogicalName,
+                columnLogicalName,
+                retrieveAsIfPublished: true,
+                CancellationToken.None
+            ).GetAwaiter().GetResult();
+            if( unpublishedRequirement.RequirementLevel
+                != RequirementLevels.Recommended )
+            {
+                throw new InvalidOperationException(
+                    "Unpublished requirement readback did not match the edit."
+                );
+            }
+            Console.WriteLine("Updated unpublished requirement level.");
+
+            var updateResult = schema.UpdateColumnAsync(
+                new UpdateColumnRequest
+                {
+                    Context = context,
+                    TableLogicalName = tableLogicalName,
+                    TableMetadataId = tableId,
+                    ColumnLogicalName = columnLogicalName,
+                    ExpectedMetadataId = unpublishedRequirement.MetadataId,
                     SetDisplayName = true,
                     DisplayName = "Live Text Edited",
                     SetDescription = false,
-                    Description = fresh.Description,
+                    Description = unpublishedRequirement.Description,
                     NewMaxLength = null,
                     SetRequirementLevel = false,
-                    RequirementLevel = fresh.RequirementLevel
+                    RequirementLevel = unpublishedRequirement.RequirementLevel
                         ?? RequirementLevels.Optional
                 },
                 CancellationToken.None
@@ -259,7 +297,8 @@ internal static class LiveTest
                 CancellationToken.None
             ).GetAwaiter().GetResult();
             if( published.MetadataId != columnId
-                || published.DisplayName != "Live Text Edited" )
+                || published.DisplayName != "Live Text Edited"
+                || published.RequirementLevel != RequirementLevels.Recommended )
             {
                 throw new InvalidOperationException(
                     "Published column readback did not match the edit."
@@ -328,9 +367,9 @@ internal static class LiveTest
         catch( Exception ex )
         {
             Console.Error.WriteLine(
-                "Lifecycle failed: " + ex.Message
+                "Lifecycle failed: " + ex
             );
-            ledger.Add("error", ex.Message);
+            ledger.Add("error", ex.ToString());
             return 1;
         }
         finally

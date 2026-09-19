@@ -41,6 +41,7 @@ public class DataverseService : IDisposable
     ];
 
     private readonly ServiceClient _client;
+    private readonly IDataverseExecutor _executor;
     private readonly string _environmentUrl;
 
     public DataverseService(string url)
@@ -62,15 +63,52 @@ public class DataverseService : IDisposable
         };
 
         _client = new ServiceClient(options, deferConnection: true);
+        _executor = new LoggingDataverseExecutor(
+            new ServiceClientExecutor(_client)
+        );
+        SessionLog.Info(
+            "Dataverse.Client",
+            "Created deferred client for environment=" + _environmentUrl
+        );
     }
 
     public void Connect()
     {
-        _client.Connect();
-
-        if( !_client.IsReady )
+        SessionLog.Info(
+            "Dataverse.Connect",
+            "Starting connection to environment=" + _environmentUrl
+        );
+        try
         {
-            throw new InvalidOperationException($"Connection failed: {_client.LastError}");
+            _client.Connect();
+
+            if( !_client.IsReady )
+            {
+                SessionLog.Warning(
+                    "Dataverse.Connect",
+                    "Client is not ready. lastError=" + _client.LastError
+                        + " lastException=" + _client.LastException
+                );
+                throw new InvalidOperationException(
+                    $"Connection failed: {_client.LastError}"
+                );
+            }
+
+            SessionLog.Info(
+                "Dataverse.Connect",
+                "Connection ready. isReady=" + _client.IsReady
+            );
+        }
+        catch( Exception ex )
+        {
+            SessionLog.Exception(
+                "Dataverse.Connect",
+                ex,
+                "Connection failed for environment=" + _environmentUrl
+                    + " lastError=" + _client.LastError
+                    + " lastException=" + _client.LastException
+            );
+            throw;
         }
     }
 
@@ -78,8 +116,12 @@ public class DataverseService : IDisposable
 
     public DataverseSchemaService CreateSchemaService()
     {
+        SessionLog.Debug(
+            "Dataverse.Client",
+            "Creating schema service for environment=" + _environmentUrl
+        );
         return new DataverseSchemaService(
-            new ServiceClientExecutor(_client),
+            _executor,
             _environmentUrl
         );
     }
@@ -88,6 +130,7 @@ public class DataverseService : IDisposable
         CancellationToken cancellationToken
     )
     {
+        SessionLog.Info("Dataverse.Operation", "GetSolutions started");
         var query = new QueryExpression("solution")
         {
             ColumnSet = new ColumnSet(SolutionColumns),
@@ -112,6 +155,10 @@ public class DataverseService : IDisposable
             solutions.Add(CreateSolution(entity));
         }
 
+        SessionLog.Info(
+            "Dataverse.Operation",
+            "GetSolutions completed count=" + solutions.Count
+        );
         return solutions;
     }
 
@@ -120,6 +167,10 @@ public class DataverseService : IDisposable
         CancellationToken cancellationToken
     )
     {
+        SessionLog.Info(
+            "Dataverse.Operation",
+            "GetSolutionComponents started solutionId=" + solutionId
+        );
         if( solutionId == Guid.Empty )
         {
             throw new ArgumentException("A solution ID is required.", nameof(solutionId));
@@ -146,6 +197,11 @@ public class DataverseService : IDisposable
         var rows = await RetrieveAllAsync(query, cancellationToken);
         var components = rows.Select(CreateComponent).ToList();
         await EnrichTableComponentsAsync(components, cancellationToken);
+        SessionLog.Info(
+            "Dataverse.Operation",
+            "GetSolutionComponents completed solutionId=" + solutionId
+                + " count=" + components.Count
+        );
         return components;
     }
 
@@ -155,6 +211,11 @@ public class DataverseService : IDisposable
         CancellationToken cancellationToken
     )
     {
+        SessionLog.Info(
+            "Dataverse.Operation",
+            "GetEntity started logicalName=" + logicalName
+                + " metadataId=" + metadataId
+        );
         if( string.IsNullOrWhiteSpace(logicalName) )
         {
             throw new ArgumentException("A table logical name is required.", nameof(logicalName));
@@ -173,13 +234,19 @@ public class DataverseService : IDisposable
             RetrieveAsIfPublished = true
         };
 
-        var response = (RetrieveEntityResponse)await _client.ExecuteAsync(
+        var response = (RetrieveEntityResponse)await _executor.ExecuteAsync(
             request,
             cancellationToken
         );
         var metadata = response.EntityMetadata;
         VerifyEntityIdentity(metadata, logicalName, metadataId);
-        return CreateEntityDetails(metadata);
+        var result = CreateEntityDetails(metadata);
+        SessionLog.Info(
+            "Dataverse.Operation",
+            "GetEntity completed logicalName=" + logicalName
+                + " fields=" + result.Fields.Count
+        );
+        return result;
     }
 
     public virtual async Task<DataverseEntityDetails>
@@ -188,6 +255,10 @@ public class DataverseService : IDisposable
             CancellationToken cancellationToken
         )
     {
+        SessionLog.Info(
+            "Dataverse.Operation",
+            "GetEntityByLogicalName started logicalName=" + logicalName
+        );
         if( string.IsNullOrWhiteSpace(logicalName) )
         {
             throw new ArgumentException(
@@ -202,11 +273,17 @@ public class DataverseService : IDisposable
             LogicalName = logicalName,
             RetrieveAsIfPublished = true
         };
-        var response = (RetrieveEntityResponse)await _client.ExecuteAsync(
+        var response = (RetrieveEntityResponse)await _executor.ExecuteAsync(
             request,
             cancellationToken
         );
-        return CreateEntityDetails(response.EntityMetadata);
+        var result = CreateEntityDetails(response.EntityMetadata);
+        SessionLog.Info(
+            "Dataverse.Operation",
+            "GetEntityByLogicalName completed logicalName=" + logicalName
+                + " fields=" + result.Fields.Count
+        );
+        return result;
     }
 
     public virtual async Task<IReadOnlyList<DataverseColumn>> GetColumnsAsync(
@@ -215,6 +292,11 @@ public class DataverseService : IDisposable
         CancellationToken cancellationToken
     )
     {
+        SessionLog.Info(
+            "Dataverse.Operation",
+            "GetColumns started logicalName=" + logicalName
+                + " metadataId=" + metadataId
+        );
         if( string.IsNullOrWhiteSpace(logicalName) )
         {
             throw new ArgumentException(
@@ -236,10 +318,10 @@ public class DataverseService : IDisposable
             EntityFilters = EntityFilters.Entity | EntityFilters.Attributes,
             LogicalName = logicalName,
             MetadataId = metadataId,
-            RetrieveAsIfPublished = false
+            RetrieveAsIfPublished = true
         };
 
-        var response = (RetrieveEntityResponse)await _client.ExecuteAsync(
+        var response = (RetrieveEntityResponse)await _executor.ExecuteAsync(
             request,
             cancellationToken
         );
@@ -248,6 +330,10 @@ public class DataverseService : IDisposable
         var columns = new List<DataverseColumn>();
         if( metadata.Attributes == null )
         {
+            SessionLog.Info(
+                "Dataverse.Operation",
+                "GetColumns completed logicalName=" + logicalName + " count=0"
+            );
             return columns;
         }
 
@@ -256,9 +342,15 @@ public class DataverseService : IDisposable
             columns.Add(CreateColumn(attribute));
         }
 
-        return columns
+        var result = columns
             .OrderBy(column => column.SchemaName, StringComparer.Ordinal)
             .ToList();
+        SessionLog.Info(
+            "Dataverse.Operation",
+            "GetColumns completed logicalName=" + logicalName
+                + " count=" + result.Count
+        );
+        return result;
     }
 
     public virtual Task<Guid> CreateTableAsync(
@@ -266,6 +358,11 @@ public class DataverseService : IDisposable
         CancellationToken cancellationToken
     )
     {
+        SessionLog.Info(
+            "Dataverse.Operation",
+            "CreateTable requested solution=" + request.Context.SolutionUniqueName
+                + " schemaSuffix=" + request.SchemaSuffix
+        );
         return CreateSchemaService().CreateTableAsync(
             request,
             cancellationToken
@@ -277,6 +374,12 @@ public class DataverseService : IDisposable
         CancellationToken cancellationToken
     )
     {
+        SessionLog.Info(
+            "Dataverse.Operation",
+            "CreateColumn requested table=" + request.TableLogicalName
+                + " schemaSuffix=" + request.SchemaSuffix
+                + " kind=" + request.Kind
+        );
         return CreateSchemaService().CreateColumnAsync(
             request,
             cancellationToken
@@ -291,6 +394,12 @@ public class DataverseService : IDisposable
         CancellationToken cancellationToken
     )
     {
+        SessionLog.Info(
+            "Dataverse.Operation",
+            "GetColumnDefinition requested table=" + tableLogicalName
+                + " column=" + columnLogicalName
+                + " published=" + retrieveAsIfPublished
+        );
         return CreateSchemaService().LoadColumnDefinitionAsync(
             tableLogicalName,
             columnLogicalName,
@@ -305,6 +414,12 @@ public class DataverseService : IDisposable
         CancellationToken cancellationToken
     )
     {
+        SessionLog.Info(
+            "Dataverse.Operation",
+            "UpdateColumn requested table=" + request.TableLogicalName
+                + " column=" + request.ColumnLogicalName
+                + " expectedMetadataId=" + request.ExpectedMetadataId
+        );
         return CreateSchemaService().UpdateColumnAsync(
             request,
             cancellationToken
@@ -316,6 +431,10 @@ public class DataverseService : IDisposable
         CancellationToken cancellationToken
     )
     {
+        SessionLog.Info(
+            "Dataverse.Operation",
+            "GetColumnDeleteDependencies requested metadataId=" + columnMetadataId
+        );
         return CreateSchemaService().GetColumnDeleteDependenciesAsync(
             columnMetadataId,
             cancellationToken
@@ -331,6 +450,12 @@ public class DataverseService : IDisposable
         SolutionWriteContext? context = null
     )
     {
+        SessionLog.Info(
+            "Dataverse.Operation",
+            "DeleteColumn requested table=" + tableLogicalName
+                + " column=" + columnLogicalName
+                + " expectedMetadataId=" + expectedMetadataId
+        );
         return CreateSchemaService().DeleteColumnAsync(
             tableLogicalName,
             columnLogicalName,
@@ -348,6 +473,11 @@ public class DataverseService : IDisposable
         Guid tableMetadataId = default
     )
     {
+        SessionLog.Info(
+            "Dataverse.Operation",
+            "PublishTable requested table=" + tableLogicalName
+                + " metadataId=" + tableMetadataId
+        );
         return CreateSchemaService().PublishTableAsync(
             tableLogicalName,
             cancellationToken,
@@ -362,6 +492,11 @@ public class DataverseService : IDisposable
         CancellationToken cancellationToken
     )
     {
+        SessionLog.Info(
+            "Dataverse.Operation",
+            "DeleteTable requested table=" + tableLogicalName
+                + " metadataId=" + tableMetadataId
+        );
         return CreateSchemaService().DeleteTableAsync(
             tableLogicalName,
             tableMetadataId,
@@ -378,7 +513,7 @@ public class DataverseService : IDisposable
         while( true )
         {
             cancellationToken.ThrowIfCancellationRequested();
-            var page = await _client.RetrieveMultipleAsync(
+            var page = await _executor.RetrieveMultipleAsync(
                 query,
                 cancellationToken
             );
@@ -490,7 +625,7 @@ public class DataverseService : IDisposable
             RetrieveAsIfPublished = true
         };
 
-        var response = (RetrieveAllEntitiesResponse)await _client.ExecuteAsync(
+        var response = (RetrieveAllEntitiesResponse)await _executor.ExecuteAsync(
             request,
             cancellationToken
         );
@@ -520,7 +655,7 @@ public class DataverseService : IDisposable
                 RetrieveAsIfPublished = true
             };
 
-            var response = (RetrieveEntityResponse)await _client.ExecuteAsync(
+            var response = (RetrieveEntityResponse)await _executor.ExecuteAsync(
                 request,
                 cancellationToken
             );
@@ -635,6 +770,10 @@ public class DataverseService : IDisposable
 
     public void Dispose()
     {
+        SessionLog.Info(
+            "Dataverse.Client",
+            "Disposing client for environment=" + _environmentUrl
+        );
         _client.Dispose();
     }
 }

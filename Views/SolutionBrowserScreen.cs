@@ -1,4 +1,5 @@
 using dvtui.Models;
+using dvtui.Services;
 
 using Spectre.Console;
 using Spectre.Console.Rendering;
@@ -90,6 +91,12 @@ internal sealed class SolutionBrowserScreen
             canWrite,
             writeDisabledReason
         );
+        SessionLog.Info(
+            "UI.SolutionBrowser",
+            "Screen started solution=" + solution.UniqueName
+                + " id=" + solution.Id
+                + " canWrite=" + canWrite
+        );
         var result = new SolutionBrowserSelection[1];
         AnsiConsole.Clear();
         AnsiConsole.Live(screen.Render())
@@ -99,6 +106,10 @@ internal sealed class SolutionBrowserScreen
             .GetAwaiter()
             .GetResult();
 
+        SessionLog.Info(
+            "UI.SolutionBrowser",
+            "Screen completed result=" + (result[0]?.Result.ToString() ?? "none")
+        );
         return result[0];
     }
 
@@ -135,6 +146,12 @@ internal sealed class SolutionBrowserScreen
                 while( Console.KeyAvailable )
                 {
                     var key = Console.ReadKey(intercept: true);
+                    SessionLog.Key(
+                        "SolutionBrowserScreen",
+                        key,
+                        "pendingLoad=" + (pendingLoad != null)
+                            + " details=" + (_pendingDetails != null)
+                    );
                     if( key.Key == ConsoleKey.Q || key.KeyChar == '\u0003' )
                     {
                         result[0] = new SolutionBrowserSelection
@@ -287,12 +304,21 @@ internal sealed class SolutionBrowserScreen
             _status = _components.Count == 0
                 ? "No components in this solution. N: new table | R: reload | Esc: solutions"
                 : $"{_components.Count} component rows";
+            SessionLog.Info(
+                "UI.SolutionBrowser",
+                "Loaded components count=" + _components.Count
+            );
         }
         catch( OperationCanceledException ) when( cancellationToken.IsCancellationRequested )
         {
         }
         catch( Exception ex )
         {
+            SessionLog.Exception(
+                "UI.SolutionBrowser",
+                ex,
+                "Loading solution components failed"
+            );
             _loadFailed = true;
             _components = [];
             _status = "Could not load components. R: retry | Esc: solutions";
@@ -323,6 +349,11 @@ internal sealed class SolutionBrowserScreen
         }
         catch( Exception ex )
         {
+            SessionLog.Exception(
+                "UI.SolutionBrowser",
+                ex,
+                "Loading component details failed"
+            );
             if( !IsCurrentDetailsRequest(request) )
             {
                 return;

@@ -1,4 +1,5 @@
 using System.Globalization;
+using System.Net;
 using dvtui.Models;
 using dvtui.Services;
 
@@ -39,6 +40,8 @@ internal static class ServiceTests
         TestUpdateColumnRejectsLengthDecrease();
         TestUpdateColumnClearsDescription();
         TestUpdatePreservesOtherLabels();
+        TestUpdatePreservesRequirementMetadata();
+        TestUpdateRequirementUsesWebApiFallback();
         TestDeleteColumnSendsNothingWhenManaged();
         TestDeleteColumnVerifiesIdentity();
         TestDeleteColumnBlocksDependencies();
@@ -870,6 +873,151 @@ internal static class ServiceTests
             },
             CancellationToken.None
         ).GetAwaiter().GetResult();
+    }
+
+    private static void TestUpdatePreservesRequirementMetadata()
+    {
+        var fake = new FakeExecutor();
+        var metadataId = Guid.NewGuid();
+        var column = CustomColumn(metadataId);
+        var originalRequirement = column.RequiredLevel;
+        fake.OnExecute = request =>
+        {
+            if( request is RetrieveAttributeRequest )
+            {
+                var response = new RetrieveAttributeResponse();
+                response.Results["AttributeMetadata"] = column;
+                return response;
+            }
+
+            if( request is UpdateAttributeRequest update )
+            {
+                Check(
+                    update.Attribute.RequiredLevel?.Value
+                        == AttributeRequiredLevel.Recommended,
+                    "update changes requirement value"
+                );
+                Check(
+                    update.Attribute.RequiredLevel?.IsValueModified == true,
+                    "update marks requirement as modified"
+                );
+                Check(
+                    ReferenceEquals(
+                        update.Attribute.RequiredLevel,
+                        originalRequirement
+                    ),
+                    "update preserves requirement metadata"
+                );
+            }
+
+            return new UpdateAttributeResponse();
+        };
+
+        var service = new DataverseSchemaService(fake);
+        service.UpdateColumnAsync(
+            new UpdateColumnRequest
+            {
+                Context = UnmanagedContext(),
+                TableLogicalName = "new_things",
+                ColumnLogicalName = "new_note",
+                ExpectedMetadataId = metadataId,
+                SetRequirementLevel = true,
+                RequirementLevel = RequirementLevels.Recommended
+            },
+            CancellationToken.None
+        ).GetAwaiter().GetResult();
+    }
+
+    private static void TestUpdateRequirementUsesWebApiFallback()
+    {
+        var fake = new FakeExecutor();
+        var tableId = Guid.NewGuid();
+        var metadataId = Guid.NewGuid();
+        var column = CustomColumn(metadataId);
+        var putBody = string.Empty;
+        fake.OnExecute = request =>
+        {
+            if( request is RetrieveEntityRequest )
+            {
+                var response = new RetrieveEntityResponse();
+                response.Results["EntityMetadata"] = new EntityMetadata
+                {
+                    MetadataId = tableId,
+                    LogicalName = "new_things"
+                };
+                return response;
+            }
+
+            if( request is RetrieveAttributeRequest )
+            {
+                var response = new RetrieveAttributeResponse();
+                response.Results["AttributeMetadata"] = column;
+                return response;
+            }
+
+            return new UpdateAttributeResponse();
+        };
+        fake.OnWebRequest = (method, path, body) =>
+        {
+            if( method == HttpMethod.Get )
+            {
+                var metadataJson = "{\"EntityMetadata\":{"
+                    + "\"MetadataId\":\"" + tableId + "\","
+                    + "\"Attributes\":[{"
+                    + "\"@odata.type\":\"Microsoft.Dynamics.CRM.StringAttributeMetadata\","
+                    + "\"MetadataId\":\"" + metadataId + "\","
+                    + "\"LogicalName\":\"new_note\","
+                    + "\"RequiredLevel\":{\"Value\":\"None\","
+                    + "\"CanBeChanged\":true,"
+                    + "\"ManagedPropertyLogicalName\":"
+                    + "\"canmodifyrequirementlevelsettings\"}"
+                    + "}]}}";
+                return WebResponse(HttpStatusCode.OK, metadataJson);
+            }
+
+            putBody = body;
+            Check(
+                path.Contains("EntityDefinitions", StringComparison.Ordinal),
+                "Web API fallback targets attribute definition"
+            );
+            Check(
+                body.Contains(
+                    "\"Value\":\"Recommended\"",
+                    StringComparison.Ordinal
+                ),
+                "Web API fallback sends requested requirement"
+            );
+            return WebResponse(HttpStatusCode.NoContent, string.Empty);
+        };
+
+        var service = new DataverseSchemaService(fake);
+        service.UpdateColumnAsync(
+            new UpdateColumnRequest
+            {
+                Context = UnmanagedContext(),
+                TableLogicalName = "new_things",
+                TableMetadataId = tableId,
+                ColumnLogicalName = "new_note",
+                ExpectedMetadataId = metadataId,
+                SetRequirementLevel = true,
+                RequirementLevel = RequirementLevels.Recommended
+            },
+            CancellationToken.None
+        ).GetAwaiter().GetResult();
+
+        Check(fake.WebRequests.Count == 2, "Web API fallback reads and updates metadata");
+        Check(!string.IsNullOrWhiteSpace(putBody), "Web API fallback sends a full definition");
+    }
+
+    private static HttpResponseMessage WebResponse(
+        HttpStatusCode statusCode,
+        string body
+    )
+    {
+        return new HttpResponseMessage(statusCode)
+        {
+            Content = new StringContent(body)
+        };
     }
 
     private static void TestDeleteColumnSendsNothingWhenManaged()

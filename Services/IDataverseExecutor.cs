@@ -1,3 +1,5 @@
+using System.Net.Http;
+
 using Microsoft.Xrm.Sdk;
 using Microsoft.Xrm.Sdk.Query;
 
@@ -16,7 +18,19 @@ public interface IDataverseExecutor
     );
 }
 
-public sealed class ServiceClientExecutor : IDataverseExecutor
+public interface IDataverseWebExecutor
+{
+    Task<HttpResponseMessage> ExecuteWebRequestAsync(
+        HttpMethod method,
+        string queryString,
+        string body,
+        Dictionary<string, List<string>> customHeaders,
+        string? contentType,
+        CancellationToken cancellationToken
+    );
+}
+
+public sealed class ServiceClientExecutor : IDataverseExecutor, IDataverseWebExecutor
 {
     private readonly Microsoft.PowerPlatform.Dataverse.Client.ServiceClient
         _client;
@@ -42,5 +56,24 @@ public sealed class ServiceClientExecutor : IDataverseExecutor
     )
     {
         return _client.RetrieveMultipleAsync(query, cancellationToken);
+    }
+
+    public Task<HttpResponseMessage> ExecuteWebRequestAsync(
+        HttpMethod method,
+        string queryString,
+        string body,
+        Dictionary<string, List<string>> customHeaders,
+        string? contentType,
+        CancellationToken cancellationToken
+    )
+    {
+        return _client.ExecuteWebRequestAsync(
+            method,
+            queryString,
+            body,
+            customHeaders,
+            contentType,
+            cancellationToken
+        );
     }
 }

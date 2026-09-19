@@ -1,5 +1,6 @@
 using Spectre.Console;
 using Spectre.Console.Rendering;
+using dvtui.Services;
 
 namespace dvtui.Views;
 
@@ -31,6 +32,7 @@ internal sealed class ConfirmationScreen
 
     public bool Show()
     {
+        SessionLog.Info("UI.Confirmation", "Shown title=" + _title);
         AnsiConsole.Clear();
         AnsiConsole.Live(Render())
             .StartAsync(async context =>
@@ -39,7 +41,9 @@ internal sealed class ConfirmationScreen
                 {
                     while( Console.KeyAvailable )
                     {
-                        HandleKey(Console.ReadKey(intercept: true));
+                        var key = Console.ReadKey(intercept: true);
+                        SessionLog.Key("ConfirmationScreen", key, "title=" + _title);
+                        HandleKey(key);
                     }
 
                     context.UpdateTarget(Render());
@@ -48,7 +52,14 @@ internal sealed class ConfirmationScreen
             })
             .GetAwaiter()
             .GetResult();
-        return _submitted && _validate(_value);
+        var confirmed = _submitted && _validate(_value);
+        SessionLog.Info(
+            "UI.Confirmation",
+            "Completed title=" + _title
+                + " submitted=" + _submitted
+                + " confirmed=" + confirmed
+        );
+        return confirmed;
     }
 
     private void HandleKey(ConsoleKeyInfo key)

@@ -204,6 +204,13 @@ internal sealed class ColumnEditorScreen : IFormScreen
 
     public async Task SubmitAsync(CancellationToken cancellationToken)
     {
+        SessionLog.Info(
+            "UI.ColumnEditor",
+            "Submit started mode=" + (_isEdit ? "edit" : "create")
+                + " table=" + _tableLogicalName
+                + " column=" + (_existing?.LogicalName ?? "none")
+                + " kind=" + _kind
+        );
         _submitting = true;
         _hasError = false;
         _status = _isEdit ? "Saving column..." : "Creating column...";
@@ -222,6 +229,11 @@ internal sealed class ColumnEditorScreen : IFormScreen
         catch( OperationCanceledException )
             when( cancellationToken.IsCancellationRequested )
         {
+            SessionLog.Warning(
+                "UI.ColumnEditor",
+                "Submit cancelled after dispatch mode="
+                    + (_isEdit ? "edit" : "create")
+            );
             MarkOutcomeUnknown(
                 "Operation cancelled after dispatch; verify before retrying."
             );
@@ -229,11 +241,17 @@ internal sealed class ColumnEditorScreen : IFormScreen
         }
         catch( SchemaWriteOutcomeUnknownException ex )
         {
+            SessionLog.Exception(
+                "UI.ColumnEditor",
+                ex,
+                "Submit outcome unknown"
+            );
             MarkOutcomeUnknown(ex.Message);
             Touch();
         }
         catch( Exception ex )
         {
+            SessionLog.Exception("UI.ColumnEditor", ex, "Submit failed");
             _status = ex.Message;
             _hasError = true;
             Touch();
@@ -563,6 +581,10 @@ internal sealed class ColumnEditorScreen : IFormScreen
         );
         if( validationError != null )
         {
+            SessionLog.Warning(
+                "UI.ColumnEditor",
+                "Create validation failed message=" + validationError
+            );
             _status = validationError;
             _hasError = true;
             return;
@@ -590,6 +612,11 @@ internal sealed class ColumnEditorScreen : IFormScreen
         };
 
         await _service.CreateColumnAsync(request, cancellationToken);
+        SessionLog.Info(
+            "UI.ColumnEditor",
+            "Create request completed table=" + _tableLogicalName
+                + " schemaSuffix=" + _schemaSuffix
+        );
         _mutationSucceeded = true;
         _status = "Column created. Publish the table separately if needed.";
     }
@@ -600,12 +627,21 @@ internal sealed class ColumnEditorScreen : IFormScreen
     {
         if( _existing == null )
         {
+            SessionLog.Warning(
+                "UI.ColumnEditor",
+                "Edit requested without an existing column"
+            );
             return;
         }
 
         var capability = ColumnCapabilityPolicy.Evaluate(_existing);
         if( !capability.CanEdit )
         {
+            SessionLog.Warning(
+                "UI.ColumnEditor",
+                "Edit blocked column=" + _existing.LogicalName
+                    + " reason=" + capability.EditReason
+            );
             _status = capability.EditReason
                 ?? ColumnCapabilityPolicy.ReasonUnknown;
             _hasError = true;
@@ -645,6 +681,10 @@ internal sealed class ColumnEditorScreen : IFormScreen
             && !requirementChanged
             && !maxLengthChanged )
         {
+            SessionLog.Info(
+                "UI.ColumnEditor",
+                "Edit submitted with no changes column=" + _existing.LogicalName
+            );
             _status = "No changes to save.";
             return;
         }
@@ -698,6 +738,11 @@ internal sealed class ColumnEditorScreen : IFormScreen
         };
 
         var result = await _service.UpdateColumnAsync(request, cancellationToken);
+        SessionLog.Info(
+            "UI.ColumnEditor",
+            "Update request completed column=" + _existing.LogicalName
+                + " changed=" + result.Changed
+        );
         _mutationSucceeded = result.Changed;
         _status = result.Changed
             ? "Column saved. Publish the table separately."

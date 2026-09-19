@@ -17,6 +17,18 @@ internal static class Program
 
     private static void Main(string[] args)
     {
+        var logPath = SessionLog.Start(args);
+        SessionLog.Info(
+            "Application",
+            "Session log path=" + (logPath ?? "unavailable")
+        );
+        SessionLog.Info(
+            "Application",
+            "terminal inputRedirected=" + Console.IsInputRedirected
+                + " outputRedirected=" + Console.IsOutputRedirected
+                + " size=" + GetTerminalSize()
+                + " controlCAsInput=" + Console.TreatControlCAsInput
+        );
         ConfigureWslBrowser();
         DataverseService? service = null;
         Console.CancelKeyPress += HandleCancelKeyPress;
@@ -25,10 +37,15 @@ internal static class Program
         {
             void RunApplication()
             {
+                SessionLog.Screen("StartupScreen", "enter");
                 var connected = StartupScreen.Show(
                     GetEnvUrl(args),
                     async (url, cancellationToken) =>
                     {
+                        SessionLog.Info(
+                            "UI.Connection",
+                            "Connect requested environment=" + url
+                        );
                         var candidate = new DataverseService(url);
                         var assigned = false;
                         try
@@ -40,6 +57,19 @@ internal static class Program
                             cancellationToken.ThrowIfCancellationRequested();
                             service = candidate;
                             assigned = true;
+                            SessionLog.Info(
+                                "UI.Connection",
+                                "Connect callback completed environment=" + url
+                            );
+                        }
+                        catch( Exception ex )
+                        {
+                            SessionLog.Exception(
+                                "UI.Connection",
+                                ex,
+                                "Connect callback failed environment=" + url
+                            );
+                            throw;
                         }
                         finally
                         {
@@ -49,6 +79,11 @@ internal static class Program
                             }
                         }
                     }
+                );
+                SessionLog.Screen(
+                    "StartupScreen",
+                    "exit",
+                    "connected=" + connected
                 );
 
                 if( connected && service != null )
@@ -81,6 +116,7 @@ internal static class Program
         }
         catch( Exception ex )
         {
+            SessionLog.Exception("Application", ex, "Unhandled application error");
             AnsiConsole.MarkupLine(
                 $"[red]Error: {Markup.Escape(ex.Message)}[/]"
             );
@@ -89,7 +125,18 @@ internal static class Program
         {
             RestoreTerminal(false);
             Console.CancelKeyPress -= HandleCancelKeyPress;
-            service?.Dispose();
+            try
+            {
+                service?.Dispose();
+            }
+            catch( Exception ex )
+            {
+                SessionLog.Exception("Dataverse.Client", ex, "Dispose failed");
+            }
+            finally
+            {
+                SessionLog.Stop();
+            }
         }
     }
 
@@ -98,6 +145,10 @@ internal static class Program
         ConsoleCancelEventArgs args
     )
     {
+        SessionLog.Warning(
+            "UI.Signal",
+            "Console.CancelKeyPress received type=" + args.SpecialKey
+        );
         RestoreTerminal(false);
     }
 
@@ -115,6 +166,7 @@ internal static class Program
 
     private static void RunSolutionLoop(DataverseService service)
     {
+        SessionLog.Screen("SolutionLoop", "enter");
         DataverseSolution? activeSolution = null;
         SolutionWriteContext? activeContext = null;
         var pendingTables = new HashSet<Guid>();
@@ -124,17 +176,37 @@ internal static class Program
             if( activeSolution == null )
             {
                 pendingTables.Clear();
+                SessionLog.Screen("SolutionSelectionScreen", "enter");
                 activeSolution = SolutionSelectionScreen.Show(
                     service.GetSolutionsAsync
                 );
+                SessionLog.Screen(
+                    "SolutionSelectionScreen",
+                    "exit",
+                    activeSolution == null
+                        ? "selected=none"
+                        : "selected=" + activeSolution.UniqueName
+                );
                 if( activeSolution == null )
                 {
+                    SessionLog.Screen("SolutionLoop", "exit", "reason=no-solution");
                     return;
                 }
 
                 activeContext = LoadContext(service, activeSolution);
+                SessionLog.Info(
+                    "UI.Solution",
+                    "Selected solution uniqueName=" + activeSolution.UniqueName
+                        + " id=" + activeSolution.Id
+                        + " canWrite=" + activeContext.CanWrite
+                );
             }
 
+            SessionLog.Screen(
+                "SolutionBrowserScreen",
+                "enter",
+                "solution=" + activeSolution.UniqueName
+            );
             var selection = SolutionBrowserScreen.Show(
                 activeSolution,
                 service.GetSolutionComponentsAsync,
@@ -142,13 +214,24 @@ internal static class Program
                 activeContext?.CanWrite == true,
                 activeContext?.WriteDisabledReason
             );
+            SessionLog.Screen(
+                "SolutionBrowserScreen",
+                "exit",
+                "result=" + selection.Result
+                    + " entity=" + (selection.Entity?.LogicalName ?? "none")
+            );
             if( selection.Result == SolutionBrowserResult.Quit )
             {
+                SessionLog.Screen("SolutionLoop", "exit", "reason=quit");
                 return;
             }
 
             if( selection.Result == SolutionBrowserResult.BackToSolutions )
             {
+                SessionLog.Info(
+                    "UI.Solution",
+                    "Returning to solution selection"
+                );
                 activeSolution = null;
                 activeContext = null;
                 continue;
@@ -162,19 +245,27 @@ internal static class Program
 
             if( selection.Result == SolutionBrowserResult.CreateTable )
             {
+                SessionLog.Screen("CreateTableScreen", "enter");
                 RunCreateTable(service, activeContext);
+                SessionLog.Screen("CreateTableScreen", "exit");
                 continue;
             }
 
             if( selection.Result == SolutionBrowserResult.OpenColumns
                 && selection.Entity != null )
             {
+                SessionLog.Screen(
+                    "TableColumnsScreen",
+                    "enter",
+                    "table=" + selection.Entity.LogicalName
+                );
                 RunTableColumns(
                     service,
                     activeContext,
                     selection.Entity,
                     pendingTables
                 );
+                SessionLog.Screen("TableColumnsScreen", "exit");
             }
         }
     }
@@ -184,17 +275,35 @@ internal static class Program
         DataverseSolution solution
     )
     {
+        SessionLog.Info(
+            "UI.Solution",
+            "Loading write context solution=" + solution.UniqueName
+                + " id=" + solution.Id
+        );
         try
         {
-            return service.CreateSchemaService()
+            var context = service.CreateSchemaService()
                 .LoadWriteContextAsync(
                     solution,
                     CancellationToken.None
                 )
                 .GetAwaiter().GetResult();
+            SessionLog.Info(
+                "UI.Solution",
+                "Write context loaded solution=" + solution.UniqueName
+                    + " canWrite=" + context.CanWrite
+                    + " publisherPrefix=" + context.PublisherPrefix
+                    + " baseLanguage=" + context.BaseLanguage
+            );
+            return context;
         }
         catch( Exception ex )
         {
+            SessionLog.Exception(
+                "UI.Solution",
+                ex,
+                "Could not load write context solution=" + solution.UniqueName
+            );
             ShowOperationResult(
                 "Solution unavailable",
                 "Could not load write context: " + ex.Message
@@ -216,6 +325,10 @@ internal static class Program
         SolutionWriteContext context
     )
     {
+        SessionLog.Info(
+            "UI.CreateTable",
+            "Opening form solution=" + context.SolutionUniqueName
+        );
         var screen = new CreateTableScreen(service, context);
         if( Console.IsInputRedirected || Console.IsOutputRedirected )
         {
@@ -231,6 +344,10 @@ internal static class Program
             ))
             .GetAwaiter()
             .GetResult();
+        SessionLog.Info(
+            "UI.CreateTable",
+            "Form closed status=" + screen.Status
+        );
     }
 
     private static void RunTableColumns(
@@ -240,6 +357,11 @@ internal static class Program
         HashSet<Guid> pendingTables
     )
     {
+        SessionLog.Info(
+            "UI.TableColumns",
+            "Opening table=" + entity.LogicalName
+                + " metadataId=" + entity.MetadataId
+        );
         if( Console.IsInputRedirected || Console.IsOutputRedirected )
         {
             return;
@@ -255,6 +377,11 @@ internal static class Program
         while( true )
         {
             var action = RunTableColumnsScreen(screen, loadColumns);
+            SessionLog.Info(
+                "UI.TableColumns",
+                "Screen action=" + action
+                    + " table=" + entity.LogicalName
+            );
             loadColumns = false;
             var pendingColumn = screen.PendingColumn;
 
@@ -266,24 +393,45 @@ internal static class Program
 
             if( action == TableColumnsAction.NewColumn )
             {
+                SessionLog.Screen(
+                    "ColumnEditorScreen",
+                    "enter",
+                    "mode=create table=" + entity.LogicalName
+                );
                 screen.ResetAction();
-                if( RunColumnEditor(
+                var created = RunColumnEditor(
                     service,
                     context,
                     entity.LogicalName,
                     entity.MetadataId,
                     null
-                ) )
+                );
+                if( created )
                 {
                     pendingTables.Add(entity.MetadataId);
                     screen.SetPendingChanges(true);
                     loadColumns = true;
                 }
+                SessionLog.Screen(
+                    "ColumnEditorScreen",
+                    "exit",
+                    "mode=create succeeded=" + created
+                );
             }
             else if( action == TableColumnsAction.SaveColumn
                 && screen.Editor != null )
             {
+                SessionLog.Screen(
+                    "ColumnEditorScreen",
+                    "submit",
+                    "mode=edit column="
+                        + (pendingColumn?.LogicalName ?? "unknown")
+                );
                 var saved = RunEmbeddedColumnEditor(screen, screen.Editor);
+                SessionLog.Info(
+                    "UI.ColumnEditor",
+                    "Embedded edit completed succeeded=" + saved
+                );
                 screen.CompleteEdit(saved);
                 if( saved )
                 {
@@ -294,6 +442,12 @@ internal static class Program
             else if( action == TableColumnsAction.DeleteColumn
                 && pendingColumn != null )
             {
+                SessionLog.Info(
+                    "UI.DeleteColumn",
+                    "Delete requested table=" + entity.LogicalName
+                        + " column=" + pendingColumn.LogicalName
+                        + " metadataId=" + pendingColumn.MetadataId
+                );
                 screen.ResetAction();
                 if( DeleteColumn(
                     service,
@@ -310,6 +464,11 @@ internal static class Program
             }
             else if( action == TableColumnsAction.Publish )
             {
+                SessionLog.Info(
+                    "UI.Publish",
+                    "Publish requested table=" + entity.LogicalName
+                        + " metadataId=" + entity.MetadataId
+                );
                 screen.ResetAction();
                 if( PublishTable(
                     service,
@@ -330,6 +489,10 @@ internal static class Program
         bool loadColumns
     )
     {
+        SessionLog.Info(
+            "UI.TableColumns",
+            "Render loop started loadColumns=" + loadColumns
+        );
         AnsiConsole.Clear();
         AnsiConsole.Live(screen.Render())
             .StartAsync(async context =>
@@ -352,6 +515,11 @@ internal static class Program
                         while( Console.KeyAvailable )
                         {
                             var key = Console.ReadKey(intercept: true);
+                            SessionLog.Key(
+                                "TableColumnsScreen",
+                                key,
+                                "loading=" + screen.Loading
+                            );
                             if( key.Key == ConsoleKey.R && loadTask == null )
                             {
                                 loadTask = screen.LoadAsync(cancellation.Token);
@@ -391,6 +559,7 @@ internal static class Program
         ColumnEditorScreen editor
     )
     {
+        SessionLog.Info("UI.ColumnEditor", "Embedded submit loop started");
         AnsiConsole.Clear();
         AnsiConsole.Live(host.Render())
             .StartAsync(async context =>
@@ -404,6 +573,7 @@ internal static class Program
                     while( Console.KeyAvailable )
                     {
                         var key = Console.ReadKey(intercept: true);
+                        SessionLog.Key("ColumnEditorScreen", key, "embedded-submit");
                         if( IsCancelKey(key)
                             && !cancellation.IsCancellationRequested )
                         {
@@ -430,6 +600,10 @@ internal static class Program
                             "The request did not finish after cancellation. "
                             + "Verify Dataverse before retrying."
                         );
+                        SessionLog.Warning(
+                            "UI.ColumnEditor",
+                            "Embedded submit cancellation grace period expired"
+                        );
                         ObserveLateTask(submitTask);
                         context.UpdateTarget(host.Render());
                         return;
@@ -455,6 +629,12 @@ internal static class Program
         DataverseColumn? existing
     )
     {
+        SessionLog.Info(
+            "UI.ColumnEditor",
+            "Opening editor mode=" + (existing == null ? "create" : "edit")
+                + " table=" + tableLogicalName
+                + " column=" + (existing?.LogicalName ?? "none")
+        );
         if( existing != null )
         {
             try
@@ -462,7 +642,7 @@ internal static class Program
                 var refreshed = service.GetColumnDefinitionAsync(
                     tableLogicalName,
                     existing.LogicalName,
-                    retrieveAsIfPublished: false,
+                    retrieveAsIfPublished: true,
                     context.BaseLanguage,
                     CancellationToken.None
                 ).GetAwaiter().GetResult();
@@ -476,9 +656,19 @@ internal static class Program
                 }
 
                 existing = refreshed;
+                SessionLog.Info(
+                    "UI.ColumnEditor",
+                    "Fresh column definition loaded column=" + refreshed.LogicalName
+                        + " metadataId=" + refreshed.MetadataId
+                );
             }
             catch( Exception ex )
             {
+                SessionLog.Exception(
+                    "UI.ColumnEditor",
+                    ex,
+                    "Could not load column for editing column=" + existing.LogicalName
+                );
                 ShowOperationResult(
                     "Edit column",
                     "Could not load the column for editing: " + ex.Message
@@ -528,6 +718,11 @@ internal static class Program
                 while( Console.KeyAvailable )
                 {
                     var key = Console.ReadKey(intercept: true);
+                    SessionLog.Key(
+                        typeof(TScreen).Name,
+                        key,
+                        "form=" + screen.PendingAction
+                    );
                     screen.HandleKey(key);
                 }
 
@@ -564,6 +759,11 @@ internal static class Program
                 while( Console.KeyAvailable )
                 {
                     var key = Console.ReadKey(intercept: true);
+                    SessionLog.Key(
+                        typeof(TScreen).Name,
+                        key,
+                        "submit=" + screen.PendingAction
+                    );
                     if( !IsCancelKey(key)
                         || cancellation.IsCancellationRequested )
                     {
@@ -573,6 +773,10 @@ internal static class Program
                     screen.RequestCancellation();
                     cancellation.Cancel();
                     cancellationStarted = DateTime.UtcNow;
+                    SessionLog.Warning(
+                        "UI.Form",
+                        "Cancellation requested screen=" + typeof(TScreen).Name
+                    );
                 }
 
                 var now = DateTime.UtcNow;
@@ -582,6 +786,10 @@ internal static class Program
                     screen.RequestCancellation();
                     cancellation.Cancel();
                     cancellationStarted = now;
+                    SessionLog.Warning(
+                        "UI.Form",
+                        "Operation timeout screen=" + typeof(TScreen).Name
+                    );
                 }
 
                 if( cancellationStarted.HasValue
@@ -591,6 +799,11 @@ internal static class Program
                     screen.MarkOutcomeUnknown(
                         "The request did not finish after cancellation. "
                         + "Verify Dataverse before retrying."
+                    );
+                    SessionLog.Warning(
+                        "UI.Form",
+                        "Cancellation grace period expired screen="
+                            + typeof(TScreen).Name
                     );
                     ObserveLateTask(submitTask);
                     context.UpdateTarget(screen.Render());
@@ -614,6 +827,11 @@ internal static class Program
             }
 
             await submitTask;
+            SessionLog.Info(
+                "UI.Form",
+                "Submit completed screen=" + typeof(TScreen).Name
+                    + " status=" + screen.Status
+            );
             context.UpdateTarget(screen.Render());
             if( screen.OutcomeUnknown )
             {
@@ -622,6 +840,11 @@ internal static class Program
 
             if( screen.HasError )
             {
+                SessionLog.Warning(
+                    "UI.Form",
+                    "Submit returned validation/error screen=" + typeof(TScreen).Name
+                        + " status=" + screen.Status
+                );
                 screen.ResetForRetry();
                 continue;
             }
@@ -654,6 +877,10 @@ internal static class Program
         out string resultStatus
     )
     {
+        SessionLog.Info(
+            "UI.SchemaMutation",
+            "Started operation=" + operationDescription
+        );
         var outcome = SchemaMutationOutcome.Failed;
         var status = operationDescription;
         var panel = CreateOperationPanel(operationDescription, status);
@@ -665,10 +892,19 @@ internal static class Program
                 Task mutationTask;
                 try
                 {
+                    SessionLog.Debug(
+                        "UI.SchemaMutation",
+                        "Dispatching operation=" + operationDescription
+                    );
                     mutationTask = operation(cancellation.Token);
                 }
                 catch( Exception ex )
                 {
+                    SessionLog.Exception(
+                        "UI.SchemaMutation",
+                        ex,
+                        "Could not dispatch operation=" + operationDescription
+                    );
                     status = ex.Message;
                     displayContext.UpdateTarget(
                         CreateOperationPanel(operationDescription, status)
@@ -690,6 +926,11 @@ internal static class Program
                             cancellation.Cancel();
                             status = "Cancelling "
                                 + operationDescription + "...";
+                            SessionLog.Warning(
+                                "UI.SchemaMutation",
+                                "Cancellation requested operation="
+                                    + operationDescription
+                            );
                         }
                     }
 
@@ -701,6 +942,10 @@ internal static class Program
                         cancellation.Cancel();
                         status = "Cancelling "
                             + operationDescription + " after timeout...";
+                        SessionLog.Warning(
+                            "UI.SchemaMutation",
+                            "Timeout requested operation=" + operationDescription
+                        );
                     }
 
                     if( cancellationStarted.HasValue
@@ -712,6 +957,10 @@ internal static class Program
                             + operationDescription
                             + " is unknown. Verify Dataverse before retrying.";
                         ObserveLateTask(mutationTask);
+                        SessionLog.Warning(
+                            "UI.SchemaMutation",
+                            "Outcome unknown operation=" + operationDescription
+                        );
                         displayContext.UpdateTarget(
                             CreateOperationPanel(operationDescription, status)
                         );
@@ -729,6 +978,10 @@ internal static class Program
                     await mutationTask;
                     outcome = SchemaMutationOutcome.Succeeded;
                     status = operationDescription + " completed.";
+                    SessionLog.Info(
+                        "UI.SchemaMutation",
+                        "Succeeded operation=" + operationDescription
+                    );
                 }
                 catch( OperationCanceledException )
                 {
@@ -736,15 +989,30 @@ internal static class Program
                     status = "The outcome of "
                         + operationDescription
                         + " is unknown. Verify Dataverse before retrying.";
+                    SessionLog.Warning(
+                        "UI.SchemaMutation",
+                        "Cancelled after dispatch operation="
+                            + operationDescription
+                    );
                 }
                 catch( SchemaWriteOutcomeUnknownException ex )
                 {
                     outcome = SchemaMutationOutcome.Unknown;
                     status = ex.Message;
+                    SessionLog.Exception(
+                        "UI.SchemaMutation",
+                        ex,
+                        "Outcome unknown operation=" + operationDescription
+                    );
                 }
                 catch( Exception ex )
                 {
                     status = ex.Message;
+                    SessionLog.Exception(
+                        "UI.SchemaMutation",
+                        ex,
+                        "Failed operation=" + operationDescription
+                    );
                 }
 
                 displayContext.UpdateTarget(
@@ -754,6 +1022,11 @@ internal static class Program
             .GetAwaiter()
             .GetResult();
         resultStatus = status;
+        SessionLog.Info(
+            "UI.SchemaMutation",
+            "Finished outcome=" + outcome
+                + " status=" + status
+        );
         return outcome;
     }
 
@@ -779,6 +1052,12 @@ internal static class Program
         DataverseColumn column
     )
     {
+        SessionLog.Info(
+            "UI.DeleteColumn",
+            "Starting delete workflow table=" + tableLogicalName
+                + " column=" + column.LogicalName
+                + " metadataId=" + column.MetadataId
+        );
         try
         {
             var dependencies = service
@@ -789,12 +1068,17 @@ internal static class Program
                 .GetAwaiter().GetResult();
             if( dependencies.Count > 0 )
             {
+                SessionLog.Warning(
+                    "UI.DeleteColumn",
+                    "Delete blocked by dependencies count=" + dependencies.Count
+                );
                 ShowDependencies(dependencies);
                 return false;
             }
 
             if( !ConfirmDeleteColumn(context, tableLogicalName, column) )
             {
+                SessionLog.Info("UI.DeleteColumn", "Delete confirmation cancelled");
                 return false;
             }
 
@@ -815,6 +1099,7 @@ internal static class Program
             );
             if( outcome == SchemaMutationOutcome.Succeeded )
             {
+                SessionLog.Info("UI.DeleteColumn", "Delete completed");
                 return true;
             }
 
@@ -823,6 +1108,7 @@ internal static class Program
         }
         catch( Exception ex )
         {
+            SessionLog.Exception("UI.DeleteColumn", ex, "Delete workflow failed");
             ShowOperationResult("Delete column", ex.Message);
             return false;
         }
@@ -835,10 +1121,16 @@ internal static class Program
         Guid tableMetadataId
     )
     {
+        SessionLog.Info(
+            "UI.Publish",
+            "Starting publish workflow table=" + tableLogicalName
+                + " metadataId=" + tableMetadataId
+        );
         try
         {
             if( !ConfirmPublishTable(context, tableLogicalName) )
             {
+                SessionLog.Info("UI.Publish", "Publish confirmation cancelled");
                 return false;
             }
 
@@ -856,6 +1148,7 @@ internal static class Program
             );
             if( outcome == SchemaMutationOutcome.Succeeded )
             {
+                SessionLog.Info("UI.Publish", "Publish completed");
                 return true;
             }
 
@@ -864,6 +1157,7 @@ internal static class Program
         }
         catch( Exception ex )
         {
+            SessionLog.Exception("UI.Publish", ex, "Publish workflow failed");
             ShowOperationResult("Publish table", ex.Message);
             return false;
         }
@@ -873,6 +1167,10 @@ internal static class Program
         IReadOnlyList<DependencyInfo> dependencies
     )
     {
+        SessionLog.Info(
+            "UI.DeleteColumn",
+            "Showing dependency block count=" + dependencies.Count
+        );
         var content = new List<IRenderable>
         {
             new Text(
@@ -898,7 +1196,12 @@ internal static class Program
         DataverseColumn column
     )
     {
-        return new ConfirmationScreen(
+        SessionLog.Screen(
+            "ConfirmationScreen",
+            "enter",
+            "operation=delete-column column=" + column.LogicalName
+        );
+        var confirmed = new ConfirmationScreen(
             "Delete column",
             BuildOperationDetails(context, tableLogicalName, column.LogicalName),
             [
@@ -912,6 +1215,12 @@ internal static class Program
                 StringComparison.Ordinal
             )
         ).Show();
+        SessionLog.Screen(
+            "ConfirmationScreen",
+            "exit",
+            "operation=delete-column confirmed=" + confirmed
+        );
+        return confirmed;
     }
 
     private static bool ConfirmPublishTable(
@@ -919,7 +1228,12 @@ internal static class Program
         string tableLogicalName
     )
     {
-        return new ConfirmationScreen(
+        SessionLog.Screen(
+            "ConfirmationScreen",
+            "enter",
+            "operation=publish table=" + tableLogicalName
+        );
+        var confirmed = new ConfirmationScreen(
             "Publish table",
             BuildOperationDetails(context, tableLogicalName, null),
             [
@@ -937,6 +1251,12 @@ internal static class Program
                 StringComparison.OrdinalIgnoreCase
             )
         ).Show();
+        SessionLog.Screen(
+            "ConfirmationScreen",
+            "exit",
+            "operation=publish confirmed=" + confirmed
+        );
+        return confirmed;
     }
 
     private static IReadOnlyList<(string Label, string Value)>
@@ -962,6 +1282,10 @@ internal static class Program
 
     private static void ShowOperationResult(string title, string status)
     {
+        SessionLog.Info(
+            "UI.Message",
+            "Showing result title=" + title + " status=" + status
+        );
         MessageScreen.Show(title, [new Text(status)]);
     }
 
@@ -994,6 +1318,22 @@ internal static class Program
             ? args[0]
             : Environment.GetEnvironmentVariable(environmentVariableName)
                 ?? string.Empty;
+    }
+
+    private static string GetTerminalSize()
+    {
+        try
+        {
+            return Console.WindowWidth + "x" + Console.WindowHeight;
+        }
+        catch( IOException )
+        {
+            return "unknown";
+        }
+        catch( PlatformNotSupportedException )
+        {
+            return "unsupported";
+        }
     }
 
     private enum SchemaMutationOutcome

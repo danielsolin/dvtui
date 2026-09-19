@@ -1,5 +1,6 @@
 using Spectre.Console;
 using Spectre.Console.Rendering;
+using dvtui.Services;
 
 namespace dvtui.Views;
 
@@ -10,6 +11,7 @@ internal static class MessageScreen
         IReadOnlyList<IRenderable> content
     )
     {
+        SessionLog.Info("UI.Message", "Shown title=" + title);
         var panel = new Panel(new Rows(content))
             .Header(title)
             .RoundedBorder()
@@ -30,6 +32,7 @@ internal static class MessageScreen
                     while( Console.KeyAvailable )
                     {
                         var key = Console.ReadKey(intercept: true);
+                        SessionLog.Key("MessageScreen", key, "title=" + title);
                         if( key.Key == ConsoleKey.Enter
                             || key.Key == ConsoleKey.Escape
                             || key.KeyChar == '\u0003' )
@@ -44,5 +47,6 @@ internal static class MessageScreen
             })
             .GetAwaiter()
             .GetResult();
+        SessionLog.Info("UI.Message", "Completed title=" + title);
     }
 }
