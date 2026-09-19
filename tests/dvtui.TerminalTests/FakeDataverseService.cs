@@ -7,16 +7,19 @@ internal sealed class FakeDataverseService : DataverseService
 {
     private readonly Dictionary<Guid, List<DataverseColumn>> _columns;
     private readonly Dictionary<string, Guid> _tableIds;
+    private readonly TimeSpan _operationDelay;
 
     public FakeDataverseService(
         string url,
         Dictionary<Guid, List<DataverseColumn>> columns,
-        Dictionary<string, Guid> tableIds
+        Dictionary<string, Guid> tableIds,
+        TimeSpan? operationDelay = null
     )
         : base(url)
     {
         _columns = columns;
         _tableIds = tableIds;
+        _operationDelay = operationDelay ?? TimeSpan.Zero;
     }
 
     public override async Task<IReadOnlyList<DataverseColumn>> GetColumnsAsync(
@@ -43,7 +46,7 @@ internal sealed class FakeDataverseService : DataverseService
     )
     {
         cancellationToken.ThrowIfCancellationRequested();
-        await Task.Yield();
+        await WaitForOperationAsync(cancellationToken);
         return Guid.NewGuid();
     }
 
@@ -53,7 +56,7 @@ internal sealed class FakeDataverseService : DataverseService
     )
     {
         cancellationToken.ThrowIfCancellationRequested();
-        await Task.Yield();
+        await WaitForOperationAsync(cancellationToken);
         var metadataId = Guid.NewGuid();
         var column = new DataverseColumn
         {
@@ -98,7 +101,7 @@ internal sealed class FakeDataverseService : DataverseService
     )
     {
         cancellationToken.ThrowIfCancellationRequested();
-        await Task.Yield();
+        await WaitForOperationAsync(cancellationToken);
         if( _tableIds.TryGetValue(
             request.TableLogicalName,
             out var tableId
@@ -154,5 +157,18 @@ internal sealed class FakeDataverseService : DataverseService
         throw new InvalidOperationException(
             $"Column {request.ExpectedMetadataId} not found."
         );
+    }
+
+    private async Task WaitForOperationAsync(
+        CancellationToken cancellationToken
+    )
+    {
+        if( _operationDelay > TimeSpan.Zero )
+        {
+            await Task.Delay(_operationDelay, cancellationToken);
+            return;
+        }
+
+        await Task.Yield();
     }
 }

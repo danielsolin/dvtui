@@ -34,6 +34,7 @@ internal sealed class TableColumnsScreen
     private string _status = "Loading columns...";
     private TableColumnsAction _pendingAction = TableColumnsAction.None;
     private DataverseColumn? _pendingColumn;
+    private int _revision;
 
     public TableColumnsScreen(
         DataverseService service,
@@ -48,16 +49,19 @@ internal sealed class TableColumnsScreen
 
     public TableColumnsAction PendingAction => _pendingAction;
     public DataverseColumn? PendingColumn => _pendingColumn;
+    public int Revision => Volatile.Read(ref _revision);
 
     public void SetHeight(int height)
     {
         _height = Math.Max(1, height);
+        Touch();
     }
 
     public Task LoadAsync(CancellationToken cancellationToken)
     {
         _loading = true;
         _status = "Loading columns...";
+        Touch();
         return Task.Run(async () =>
         {
             try
@@ -78,20 +82,32 @@ internal sealed class TableColumnsScreen
                 _status = _columns.Count == 0
                     ? "No columns found."
                     : $"{_columns.Count} columns.";
+                Touch();
             }
             catch( Exception ex )
             {
                 _status = ex.Message;
+                Touch();
             }
             finally
             {
                 _loading = false;
+                Touch();
             }
         }, cancellationToken);
     }
 
     public void HandleKey(ConsoleKeyInfo key)
     {
+        if( key.Key == ConsoleKey.Escape
+            || key.Key == ConsoleKey.Q
+            || key.KeyChar == '\u0003' )
+        {
+            _pendingAction = TableColumnsAction.Close;
+            Touch();
+            return;
+        }
+
         if( _loading )
         {
             return;
@@ -99,14 +115,11 @@ internal sealed class TableColumnsScreen
 
         switch( key.Key )
         {
-            case ConsoleKey.Escape:
-            case ConsoleKey.Q:
-                _pendingAction = TableColumnsAction.Close;
-                break;
             case ConsoleKey.UpArrow:
                 if( _columns.Count > 0 )
                 {
                     _selectedIndex = Math.Max(0, _selectedIndex - 1);
+                    Touch();
                 }
                 break;
             case ConsoleKey.DownArrow:
@@ -116,6 +129,7 @@ internal sealed class TableColumnsScreen
                         _columns.Count - 1,
                         _selectedIndex + 1
                     );
+                    Touch();
                 }
                 break;
             case ConsoleKey.N:
@@ -123,6 +137,7 @@ internal sealed class TableColumnsScreen
                     && _capabilities[_selectedIndex].CanCreateColumn )
                 {
                     _pendingAction = TableColumnsAction.NewColumn;
+                    Touch();
                 }
                 break;
             case ConsoleKey.Enter:
@@ -134,11 +149,13 @@ internal sealed class TableColumnsScreen
                     {
                         _pendingColumn = _columns[_selectedIndex];
                         _pendingAction = TableColumnsAction.EditColumn;
+                        Touch();
                     }
                     else
                     {
                         _status = capability.EditReason
                             ?? ColumnCapabilityPolicy.ReasonUnknown;
+                        Touch();
                     }
                 }
                 break;
@@ -150,18 +167,26 @@ internal sealed class TableColumnsScreen
                     {
                         _pendingColumn = _columns[_selectedIndex];
                         _pendingAction = TableColumnsAction.DeleteColumn;
+                        Touch();
                     }
                     else
                     {
                         _status = capability.DeleteReason
                             ?? ColumnCapabilityPolicy.ReasonUnknown;
+                        Touch();
                     }
                 }
                 break;
             case ConsoleKey.P:
                 _pendingAction = TableColumnsAction.Publish;
+                Touch();
                 break;
         }
+    }
+
+    private void Touch()
+    {
+        Interlocked.Increment(ref _revision);
     }
 
     public IRenderable Render()

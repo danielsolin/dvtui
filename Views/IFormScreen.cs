@@ -13,6 +13,10 @@ internal enum FormAction
 internal interface IFormScreen
 {
     FormAction PendingAction { get; }
+    bool HasError { get; }
+    int Revision { get; }
     void HandleKey(ConsoleKeyInfo key);
+    void RequestCancellation();
+    void ResetForRetry();
     IRenderable Render();
 }

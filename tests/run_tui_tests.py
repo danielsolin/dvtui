@@ -1,16 +1,14 @@
 #!/usr/bin/env python3
 """PTY integration tests for the dvtui terminal screens."""
 
+import atexit
 import fcntl
 import os
 import pty
 import select
-import shutil
 import signal
 import struct
 import subprocess
-import sys
-import tempfile
 import time
 from pathlib import Path
 
@@ -25,6 +23,7 @@ BINARY = (
     / "net10.0"
     / "dvtui.TerminalTests.dll"
 )
+TEST_PROJECT = ROOT / "tests" / "dvtui.TerminalTests" / "dvtui.TerminalTests.csproj"
 TEST_SIZE = (80, 24)
 SMALL_SIZE = (58, 12)
 PROMPT = "DVTUI | 3 entities | Esc: back | Q: quit"
@@ -40,7 +39,7 @@ DETAILS_PROMPT_WIDE = "DVTUI | 3 entities | Esc: back | Q: quit"
 DETAILS_PROMPT_WIDE_SMALL = "DVTUI | 3 entities | Esc: back | Q: quit"
 DETAILS_PROMPT_WIDE_TALL = "DVTUI | 3 entities | Esc: back | Q: quit"
 DETAILS_PROMPT_WIDE_TALL_SMALL = "DVTUI | 3 entities | Esc: back | Q: quit"
-RESULTS = []
+ACTIVE_PROCESSES = set()
 
 
 def wait_for_size(fd, size):
@@ -64,20 +63,35 @@ def start_process(mode, size=TEST_SIZE):
     columns, rows = size
     env = os.environ.copy()
     env["TERM"] = "xterm-256color"
-    with tempfile.TemporaryDirectory(prefix="dvtui-pty-") as directory:
-        master_fd, slave_fd = pty.openpty()
-        process = subprocess.Popen(
-            ["dotnet", "exec", str(BINARY), mode],
-            stdin=slave_fd,
-            stdout=slave_fd,
-            stderr=subprocess.PIPE,
-            cwd=ROOT,
-            env=env,
-            start_new_session=True,
-        )
-        os.close(slave_fd)
-        set_size(master_fd, columns, rows)
-        return master_fd, process
+    master_fd, slave_fd = pty.openpty()
+    process = subprocess.Popen(
+        ["dotnet", "exec", str(BINARY), mode],
+        stdin=slave_fd,
+        stdout=slave_fd,
+        stderr=subprocess.PIPE,
+        cwd=ROOT,
+        env=env,
+        start_new_session=True,
+    )
+    os.close(slave_fd)
+    ACTIVE_PROCESSES.add(process)
+    set_size(master_fd, columns, rows)
+    return master_fd, process
+
+
+def build_test_host():
+    result = subprocess.run(
+        [
+            "dotnet",
+            "build",
+            str(TEST_PROJECT),
+            "--disable-build-servers",
+            "--nologo",
+        ],
+        cwd=ROOT,
+    )
+    if result.returncode != 0:
+        raise SystemExit("Could not build the terminal test host.")
 
 
 def set_size(fd, columns, rows):
@@ -90,10 +104,14 @@ def set_size(fd, columns, rows):
     )
 
 
-def read_available(fd, seconds=0.5):
+def read_available(fd, seconds=0.5, max_iter=60):
+    """Read for a bounded window, even when the application redraws forever."""
     data = b""
-    while True:
-        ready, _, _ = select.select([fd], [], [], seconds)
+    deadline = time.monotonic() + max(0.0, seconds)
+    for _ in range(max_iter):
+        remaining = deadline - time.monotonic()
+        timeout = 0.0 if seconds <= 0 else max(0.0, remaining)
+        ready, _, _ = select.select([fd], [], [], timeout)
         if not ready:
             break
         try:
@@ -103,13 +121,14 @@ def read_available(fd, seconds=0.5):
         if not chunk:
             break
         data += chunk
-        seconds = 0.1
+        if seconds <= 0 or time.monotonic() >= deadline:
+            break
     return data.decode(errors="ignore")
 
 
 def read_bounded(fd, max_iter=60, seconds=0.1):
     """Read with a hard iteration cap. Safe for Live-loop screens that
-    repaint continuously, where read_available could loop forever."""
+    repaint continuously."""
     data = b""
     for _ in range(max_iter):
         ready, _, _ = select.select([fd], [], [], seconds)
@@ -127,21 +146,11 @@ def read_bounded(fd, max_iter=60, seconds=0.1):
 
 def drain_until_exit(fd, process, timeout=5):
     """Read until the process exits, returning the final output."""
-    data = b""
+    data = ""
     deadline = time.time() + timeout
     while time.time() < deadline:
         if process.poll() is not None:
-            while True:
-                ready, _, _ = select.select([fd], [], [], 0.3)
-                if not ready:
-                    break
-                try:
-                    chunk = os.read(fd, 4096)
-                except OSError:
-                    break
-                if not chunk:
-                    break
-                data += chunk
+            data += read_available(fd, 0.3)
             break
         ready, _, _ = select.select([fd], [], [], 0.3)
         if ready:
@@ -151,8 +160,13 @@ def drain_until_exit(fd, process, timeout=5):
                 break
             if not chunk:
                 break
-            data += chunk
-    return data.decode(errors="ignore")
+            data += chunk.decode(errors="ignore")
+    if process.poll() is None:
+        try:
+            process.wait(timeout=0.5)
+        except subprocess.TimeoutExpired:
+            pass
+    return data
 
 
 def read_until(fd, expected, timeout=10):
@@ -161,7 +175,10 @@ def read_until(fd, expected, timeout=10):
     while time.time() < deadline:
         ready, _, _ = select.select([fd], [], [], 0.2)
         if ready:
-            chunk = os.read(fd, 4096)
+            try:
+                chunk = os.read(fd, 4096)
+            except OSError:
+                break
             if not chunk:
                 break
             data += chunk.decode(errors="ignore")
@@ -183,13 +200,37 @@ def wait_idle(fd, seconds=0.6):
 
 
 def stop_process(process):
+    ACTIVE_PROCESSES.discard(process)
     if process.poll() is None:
-        os.killpg(process.pid, signal.SIGTERM)
+        try:
+            os.killpg(process.pid, signal.SIGTERM)
+        except ProcessLookupError:
+            pass
     try:
         process.wait(timeout=5)
     except subprocess.TimeoutExpired:
-        os.killpg(process.pid, signal.SIGKILL)
+        try:
+            os.killpg(process.pid, signal.SIGKILL)
+        except ProcessLookupError:
+            pass
         process.wait(timeout=5)
+    finally:
+        ACTIVE_PROCESSES.discard(process)
+
+
+def cleanup_processes():
+    for process in list(ACTIVE_PROCESSES):
+        stop_process(process)
+
+
+def handle_signal(signum, _frame):
+    cleanup_processes()
+    raise SystemExit(128 + signum)
+
+
+atexit.register(cleanup_processes)
+signal.signal(signal.SIGINT, handle_signal)
+signal.signal(signal.SIGTERM, handle_signal)
 
 
 def test_solution_selection_navigates_and_selects():
@@ -211,6 +252,7 @@ def test_solution_selection_navigates_and_selects():
         assert "R: reload" in data
         assert "Q: quit" in data
     finally:
+        stop_process(process)
         os.close(master_fd)
     print("solution-selection navigation passed")
 
@@ -231,6 +273,7 @@ def test_solution_browser_navigates_and_esc():
         assert "Esc: solutions" in data
         assert "Q: quit" in data
     finally:
+        stop_process(process)
         os.close(master_fd)
     print("solution-browser navigation passed")
 
@@ -249,6 +292,7 @@ def test_solution_browser_small_terminal():
         assert "Table: contact" in data
         assert "Esc: solutions" in data
     finally:
+        stop_process(process)
         os.close(master_fd)
     print("solution-browser small terminal passed")
 
@@ -267,6 +311,7 @@ def test_solution_browser_tall_terminal():
         assert "Table: contact" in data
         assert "Esc: solutions" in data
     finally:
+        stop_process(process)
         os.close(master_fd)
     print("solution-browser tall terminal passed")
 
@@ -285,6 +330,7 @@ def test_solution_browser_wide_terminal():
         assert "Table: contact" in data
         assert "Esc: solutions" in data
     finally:
+        stop_process(process)
         os.close(master_fd)
     print("solution-browser wide terminal passed")
 
@@ -303,6 +349,7 @@ def test_solution_browser_wide_small_terminal():
         assert "Table: contact" in data
         assert "Esc: solutions" in data
     finally:
+        stop_process(process)
         os.close(master_fd)
     print("solution-browser wide small terminal passed")
 
@@ -321,6 +368,7 @@ def test_solution_browser_wide_tall_terminal():
         assert "Table: contact" in data
         assert "Esc: solutions" in data
     finally:
+        stop_process(process)
         os.close(master_fd)
     print("solution-browser wide tall terminal passed")
 
@@ -339,6 +387,7 @@ def test_solution_browser_wide_tall_small_terminal():
         assert "Table: contact" in data
         assert "Esc: solutions" in data
     finally:
+        stop_process(process)
         os.close(master_fd)
     print("solution-browser wide tall small terminal passed")
 
@@ -376,6 +425,28 @@ def test_create_table_submits():
         stop_process(process)
         os.close(master_fd)
     print("create-table submit passed")
+
+
+def test_create_table_can_cancel():
+    master_fd, process = start_process("create-table-slow")
+    try:
+        data = read_until(master_fd, "Create table")
+        data += read_until(master_fd, "Publisher prefix")
+        for char in b"Slow Table":
+            os.write(master_fd, bytes([char]))
+            time.sleep(0.05)
+        read_bounded(master_fd)
+        press_key(master_fd, "\r")
+        time.sleep(0.3)
+        os.write(master_fd, b"\x1b")
+        final = drain_until_exit(master_fd, process, timeout=5)
+        assert process.poll() is not None
+        assert "Operation cancelled" in final
+        assert "submit" in final
+    finally:
+        stop_process(process)
+        os.close(master_fd)
+    print("create-table cancellation passed")
 
 
 def test_column_editor_creates():
@@ -422,8 +493,7 @@ def test_column_editor_edits():
 
 
 def main():
-    if not BINARY.exists():
-        raise SystemExit(f"Test host not found: {BINARY}")
+    build_test_host()
     tests = [
         test_solution_selection_navigates_and_selects,
         test_solution_browser_navigates_and_esc,
@@ -435,6 +505,7 @@ def main():
         test_solution_browser_wide_tall_small_terminal,
         test_table_columns_navigates_and_deletes,
         test_create_table_submits,
+        test_create_table_can_cancel,
         test_column_editor_creates,
         test_column_editor_edits,
     ]

@@ -29,6 +29,7 @@ internal sealed class ColumnEditorScreen : IFormScreen
     private string _status = string.Empty;
     private FormAction _pendingAction = FormAction.None;
     private bool _hasError;
+    private int _revision;
 
     public ColumnEditorScreen(
         DataverseService service,
@@ -61,6 +62,22 @@ internal sealed class ColumnEditorScreen : IFormScreen
 
     public FormAction PendingAction => _pendingAction;
     public bool HasError => _hasError;
+    public int Revision => Volatile.Read(ref _revision);
+
+    public void RequestCancellation()
+    {
+        if( _submitting )
+        {
+            _status = "Cancelling...";
+            Touch();
+        }
+    }
+
+    public void ResetForRetry()
+    {
+        _pendingAction = FormAction.None;
+        Touch();
+    }
 
     public void HandleKey(ConsoleKeyInfo key)
     {
@@ -69,15 +86,29 @@ internal sealed class ColumnEditorScreen : IFormScreen
             return;
         }
 
-        if( key.Key == ConsoleKey.Escape )
+        if( key.Key == ConsoleKey.Escape || key.KeyChar == '\u0003' )
         {
             _pendingAction = FormAction.Close;
+            Touch();
             return;
         }
 
         if( key.Key == ConsoleKey.Enter )
         {
             _pendingAction = FormAction.Submit;
+            Touch();
+            return;
+        }
+
+        if( key.Key == ConsoleKey.Backspace
+            || key.KeyChar == '\b'
+            || key.KeyChar == '\u007f' )
+        {
+            if( _displayName.Length > 0 )
+            {
+                _displayName = _displayName[..^1];
+                Touch();
+            }
             return;
         }
 
@@ -86,49 +117,52 @@ internal sealed class ColumnEditorScreen : IFormScreen
             return;
         }
 
-        if( key.KeyChar == '\b' )
-        {
-            if( _displayName.Length > 0 )
-            {
-                _displayName = _displayName[..^1];
-            }
-            return;
-        }
-
         if( _displayName.Length < MaxDisplayLength )
         {
             _displayName += key.KeyChar;
+            Touch();
         }
     }
 
-    public Task SubmitAsync(CancellationToken cancellationToken)
+    public async Task SubmitAsync(CancellationToken cancellationToken)
     {
         _submitting = true;
         _hasError = false;
         _status = _isEdit ? "Saving column..." : "Creating column...";
-        return Task.Run(async () =>
+        Touch();
+        try
         {
-            try
+            if( _isEdit && _existing != null )
             {
-                if( _isEdit && _existing != null )
-                {
-                    await SubmitEditAsync(cancellationToken);
-                }
-                else
-                {
-                    await SubmitCreateAsync(cancellationToken);
-                }
+                await SubmitEditAsync(cancellationToken);
             }
-            catch( Exception ex )
+            else
             {
-                _status = ex.Message;
-                _hasError = true;
+                await SubmitCreateAsync(cancellationToken);
             }
-            finally
-            {
-                _submitting = false;
-            }
-        }, cancellationToken);
+        }
+        catch( OperationCanceledException )
+            when( cancellationToken.IsCancellationRequested )
+        {
+            _status = "Operation cancelled; verify before retrying.";
+            Touch();
+        }
+        catch( Exception ex )
+        {
+            _status = ex.Message;
+            _hasError = true;
+            Touch();
+        }
+        finally
+        {
+            _submitting = false;
+            Touch();
+        }
+    }
+
+    private void Touch()
+    {
+        Interlocked.Increment(ref _revision);
     }
 
     private async Task SubmitCreateAsync(

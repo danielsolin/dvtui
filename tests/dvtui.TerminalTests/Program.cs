@@ -162,6 +162,15 @@ if( mode == "create-table" )
     return 0;
 }
 
+if( mode == "create-table-slow" )
+{
+    var context = BuildWriteContext();
+    var service = BuildFakeService(context, TimeSpan.FromSeconds(10));
+    var result = RunCreateTableScreen(service, context);
+    Console.WriteLine(result);
+    return 0;
+}
+
 if( mode == "column-editor" )
 {
     var context = BuildWriteContext();
@@ -211,7 +220,8 @@ SolutionWriteContext BuildWriteContext()
 }
 
 FakeDataverseService BuildFakeService(
-    SolutionWriteContext context
+    SolutionWriteContext context,
+    TimeSpan? operationDelay = null
 )
 {
     var columns = new Dictionary<Guid, List<DataverseColumn>>
@@ -264,7 +274,8 @@ FakeDataverseService BuildFakeService(
     return new FakeDataverseService(
         context.EnvironmentUrl,
         columns,
-        tableIds
+        tableIds,
+        operationDelay
     );
 }
 
@@ -294,40 +305,64 @@ static string RunTableColumnsScreen(
                 .StartAsync(async ctx =>
                 {
                     using var cancellation = new CancellationTokenSource();
-                    var loadTask = screen.LoadAsync(cancellation.Token);
-                    while( true )
+                    try
                     {
-                        if( loadTask != null
-                            && loadTask.IsCompleted )
+                        var loadTask = screen.LoadAsync(
+                            cancellation.Token
+                        );
+                        var lastRevision = -1;
+                        var lastSize = (Width: 0, Height: 0);
+                        while( true )
                         {
-                            loadTask = null;
-                        }
-
-                        while( Console.KeyAvailable )
-                        {
-                            var key = Console.ReadKey(intercept: true);
-                            if( key.Key == ConsoleKey.R )
+                            if( loadTask != null
+                                && loadTask.IsCompleted )
                             {
-                                loadTask = screen.LoadAsync(
-                                    cancellation.Token
+                                loadTask = null;
+                            }
+
+                            while( Console.KeyAvailable )
+                            {
+                                var key = Console.ReadKey(
+                                    intercept: true
                                 );
-                            }
-                            else
-                            {
-                                screen.HandleKey(key);
+                                if( key.Key == ConsoleKey.R )
+                                {
+                                    loadTask = screen.LoadAsync(
+                                        cancellation.Token
+                                    );
+                                }
+                                else
+                                {
+                                    screen.HandleKey(key);
+                                }
+
+                                if( screen.PendingAction !=
+                                    TableColumnsAction.None )
+                                {
+                                    action[0] = screen.PendingAction;
+                                    column[0] = screen.PendingColumn;
+                                    return;
+                                }
                             }
 
-                            if( screen.PendingAction !=
-                                TableColumnsAction.None )
+                            var size = (
+                                AnsiConsole.Profile.Width,
+                                AnsiConsole.Profile.Height
+                            );
+                            var revision = screen.Revision;
+                            if( revision != lastRevision
+                                || size != lastSize )
                             {
-                                action[0] = screen.PendingAction;
-                                column[0] = screen.PendingColumn;
-                                return;
+                                ctx.UpdateTarget(screen.Render());
+                                lastRevision = revision;
+                                lastSize = size;
                             }
+                            await Task.Delay(100);
                         }
-
-                        ctx.UpdateTarget(screen.Render());
-                        await Task.Delay(50);
+                    }
+                    finally
+                    {
+                        cancellation.Cancel();
                     }
                 })
                 .GetAwaiter()
@@ -446,24 +481,79 @@ static async Task RunFormScreen<TScreen>(
     where TScreen : IFormScreen
 {
     using var cancellation = new CancellationTokenSource();
-    while( screen.PendingAction == FormAction.None )
+    while( true )
     {
-        if( Console.KeyAvailable )
+        var lastRevision = -1;
+        var lastSize = (Width: 0, Height: 0);
+        while( screen.PendingAction == FormAction.None )
         {
-            var key = Console.ReadKey(intercept: true);
-            screen.HandleKey(key);
+            if( Console.KeyAvailable )
+            {
+                var key = Console.ReadKey(intercept: true);
+                screen.HandleKey(key);
+            }
+
+            var size = (
+                AnsiConsole.Profile.Width,
+                AnsiConsole.Profile.Height
+            );
+            var revision = screen.Revision;
+            if( revision != lastRevision
+                || size != lastSize )
+            {
+                context.UpdateTarget(screen.Render());
+                lastRevision = revision;
+                lastSize = size;
+            }
+            await Task.Delay(100);
         }
 
-        context.UpdateTarget(screen.Render());
-        await Task.Delay(50);
-    }
+        if( screen.PendingAction == FormAction.Close )
+        {
+            return;
+        }
 
-    if( screen.PendingAction == FormAction.Submit )
-    {
+        var submitTask = submit(cancellation.Token);
+        lastRevision = -1;
+        lastSize = (Width: 0, Height: 0);
+        while( !submitTask.IsCompleted )
+        {
+            while( Console.KeyAvailable )
+            {
+                var key = Console.ReadKey(intercept: true);
+                if( key.Key == ConsoleKey.Escape
+                    || key.KeyChar == '\u0003' )
+                {
+                    screen.RequestCancellation();
+                    cancellation.Cancel();
+                }
+            }
+
+            var size = (
+                AnsiConsole.Profile.Width,
+                AnsiConsole.Profile.Height
+            );
+            var revision = screen.Revision;
+            if( revision != lastRevision
+                || size != lastSize )
+            {
+                context.UpdateTarget(screen.Render());
+                lastRevision = revision;
+                lastSize = size;
+            }
+            await Task.Delay(100);
+        }
+
+        await submitTask;
         context.UpdateTarget(screen.Render());
-        await submit(cancellation.Token);
-        context.UpdateTarget(screen.Render());
+        if( screen.HasError )
+        {
+            screen.ResetForRetry();
+            continue;
+        }
+
         await Task.Delay(500);
+        return;
     }
 }
 
