@@ -1,6 +1,7 @@
 using dvtui.Models;
 using dvtui.Services;
 using dvtui.Views;
+using Progress = dvtui.Views.Progress;
 
 using Spectre.Console;
 using Spectre.Console.Rendering;
@@ -282,11 +283,11 @@ internal static class Program
         );
         try
         {
-            var context = service.CreateSchemaService()
-                .LoadWriteContextAsync(
-                    solution,
-                    CancellationToken.None
-                )
+            var context = Progress.Show(
+                "Loading solution context...",
+                token => service.CreateSchemaService()
+                    .LoadWriteContextAsync(solution, token)
+            )
                 .GetAwaiter().GetResult();
             SessionLog.Info(
                 "UI.Solution",
@@ -497,6 +498,7 @@ internal static class Program
         AnsiConsole.Live(screen.Render())
             .StartAsync(async context =>
             {
+                using var progressHost = Progress.Attach();
                 using var cancellation = new CancellationTokenSource();
                 Task? loadTask = loadColumns
                     ? screen.LoadAsync(cancellation.Token)
@@ -507,13 +509,26 @@ internal static class Program
                     var lastSize = (Width: 0, Height: 0);
                     while( screen.PendingAction == TableColumnsAction.None )
                     {
+                        var refresh = false;
                         if( loadTask?.IsCompleted == true )
                         {
                             loadTask = null;
+                            refresh = true;
                         }
 
-                        while( Console.KeyAvailable )
+                        var inputLocked = Progress.DiscardPendingInput(
+                            "TableColumnsScreen"
+                        );
+                        while( !inputLocked && Console.KeyAvailable )
                         {
+                            if( Progress.DiscardPendingInput(
+                                "TableColumnsScreen"
+                            ) )
+                            {
+                                inputLocked = true;
+                                break;
+                            }
+
                             var key = Console.ReadKey(intercept: true);
                             SessionLog.Key(
                                 "TableColumnsScreen",
@@ -534,7 +549,10 @@ internal static class Program
                             AnsiConsole.Profile.Width,
                             AnsiConsole.Profile.Height
                         );
-                        if( screen.Revision != lastRevision || size != lastSize )
+                        if( refresh
+                            || screen.Revision != lastRevision
+                            || Progress.IsActive
+                            || size != lastSize )
                         {
                             context.UpdateTarget(screen.Render());
                             lastRevision = screen.Revision;
@@ -564,24 +582,18 @@ internal static class Program
         AnsiConsole.Live(host.Render())
             .StartAsync(async context =>
             {
+                using var progressHost = Progress.Attach();
                 using var cancellation = new CancellationTokenSource();
-                var submitTask = editor.SubmitAsync(cancellation.Token);
+                var submitTask = Progress.Show(
+                    editor.ProgressMessage,
+                    cancellation.Token,
+                    token => editor.SubmitAsync(token)
+                );
                 var timeoutAt = DateTime.UtcNow + FormOperationTimeout;
                 DateTime? cancellationStarted = null;
                 while( !submitTask.IsCompleted )
                 {
-                    while( Console.KeyAvailable )
-                    {
-                        var key = Console.ReadKey(intercept: true);
-                        SessionLog.Key("ColumnEditorScreen", key, "embedded-submit");
-                        if( IsCancelKey(key)
-                            && !cancellation.IsCancellationRequested )
-                        {
-                            editor.RequestCancellation();
-                            cancellation.Cancel();
-                            cancellationStarted = DateTime.UtcNow;
-                        }
-                    }
+                    Progress.DiscardPendingInput("ColumnEditorScreen");
 
                     var now = DateTime.UtcNow;
                     if( !cancellation.IsCancellationRequested
@@ -639,12 +651,15 @@ internal static class Program
         {
             try
             {
-                var refreshed = service.GetColumnDefinitionAsync(
-                    tableLogicalName,
-                    existing.LogicalName,
-                    retrieveAsIfPublished: true,
-                    context.BaseLanguage,
-                    CancellationToken.None
+                var refreshed = Progress.Show(
+                    "Loading column definition...",
+                    token => service.GetColumnDefinitionAsync(
+                        tableLogicalName,
+                        existing.LogicalName,
+                        retrieveAsIfPublished: true,
+                        context.BaseLanguage,
+                        token
+                    )
                 ).GetAwaiter().GetResult();
                 if( refreshed.MetadataId != existing.MetadataId )
                 {
@@ -709,14 +724,24 @@ internal static class Program
     )
         where TScreen : IFormScreen
     {
+        using var progressHost = Progress.Attach();
         while( true )
         {
             var lastRevision = -1;
             var lastSize = (Width: 0, Height: 0);
             while( screen.PendingAction == FormAction.None )
             {
-                while( Console.KeyAvailable )
+                var inputLocked = Progress.DiscardPendingInput(
+                    typeof(TScreen).Name
+                );
+                while( !inputLocked && Console.KeyAvailable )
                 {
+                    if( Progress.DiscardPendingInput(typeof(TScreen).Name) )
+                    {
+                        inputLocked = true;
+                        break;
+                    }
+
                     var key = Console.ReadKey(intercept: true);
                     SessionLog.Key(
                         typeof(TScreen).Name,
@@ -748,7 +773,11 @@ internal static class Program
             }
 
             using var cancellation = new CancellationTokenSource();
-            var submitTask = submit(cancellation.Token);
+            var submitTask = Progress.Show(
+                screen.ProgressMessage,
+                cancellation.Token,
+                submit
+            );
             var timeoutAt = DateTime.UtcNow + FormOperationTimeout;
             DateTime? cancellationStarted = null;
             lastRevision = -1;
@@ -756,28 +785,7 @@ internal static class Program
 
             while( !submitTask.IsCompleted )
             {
-                while( Console.KeyAvailable )
-                {
-                    var key = Console.ReadKey(intercept: true);
-                    SessionLog.Key(
-                        typeof(TScreen).Name,
-                        key,
-                        "submit=" + screen.PendingAction
-                    );
-                    if( !IsCancelKey(key)
-                        || cancellation.IsCancellationRequested )
-                    {
-                        continue;
-                    }
-
-                    screen.RequestCancellation();
-                    cancellation.Cancel();
-                    cancellationStarted = DateTime.UtcNow;
-                    SessionLog.Warning(
-                        "UI.Form",
-                        "Cancellation requested screen=" + typeof(TScreen).Name
-                    );
-                }
+                Progress.DiscardPendingInput(typeof(TScreen).Name);
 
                 var now = DateTime.UtcNow;
                 if( !cancellation.IsCancellationRequested
@@ -816,6 +824,7 @@ internal static class Program
                 );
                 var revision = screen.Revision;
                 if( revision != lastRevision
+                    || Progress.IsActive
                     || size != lastSize )
                 {
                     context.UpdateTarget(screen.Render());
@@ -865,12 +874,6 @@ internal static class Program
         );
     }
 
-    private static bool IsCancelKey(ConsoleKeyInfo key)
-    {
-        return key.Key == ConsoleKey.Escape
-            || key.KeyChar == '\u0003';
-    }
-
     private static SchemaMutationOutcome RunSchemaMutation(
         string operationDescription,
         Func<CancellationToken, Task> operation,
@@ -888,6 +891,7 @@ internal static class Program
         AnsiConsole.Live(panel)
             .StartAsync(async displayContext =>
             {
+                using var progressHost = Progress.Attach();
                 using var cancellation = new CancellationTokenSource();
                 Task mutationTask;
                 try
@@ -896,7 +900,11 @@ internal static class Program
                         "UI.SchemaMutation",
                         "Dispatching operation=" + operationDescription
                     );
-                    mutationTask = operation(cancellation.Token);
+                    mutationTask = Progress.Show(
+                        operationDescription,
+                        cancellation.Token,
+                        operation
+                    );
                 }
                 catch( Exception ex )
                 {
@@ -916,23 +924,7 @@ internal static class Program
                 DateTime? cancellationStarted = null;
                 while( !mutationTask.IsCompleted )
                 {
-                    while( Console.KeyAvailable )
-                    {
-                        var key = Console.ReadKey(intercept: true);
-                        if( IsCancelKey(key)
-                            && !cancellation.IsCancellationRequested )
-                        {
-                            cancellationStarted = DateTime.UtcNow;
-                            cancellation.Cancel();
-                            status = "Cancelling "
-                                + operationDescription + "...";
-                            SessionLog.Warning(
-                                "UI.SchemaMutation",
-                                "Cancellation requested operation="
-                                    + operationDescription
-                            );
-                        }
-                    }
+                    Progress.DiscardPendingInput("SchemaMutation");
 
                     var now = DateTime.UtcNow;
                     if( !cancellation.IsCancellationRequested
@@ -1035,9 +1027,10 @@ internal static class Program
         string status
     )
     {
+        var width = Math.Max(1, AnsiConsole.Profile.Width);
         return new Panel(new Rows(
             new Text(operationDescription),
-            new Text(status, Style.Parse("yellow"))
+            Progress.RenderStatus(width, status, Style.Parse("yellow"))
         ))
             .Header("Dataverse operation")
             .RoundedBorder()
@@ -1060,11 +1053,13 @@ internal static class Program
         );
         try
         {
-            var dependencies = service
-                .GetColumnDeleteDependenciesAsync(
+            var dependencies = Progress.Show(
+                "Checking column dependencies...",
+                token => service.GetColumnDeleteDependenciesAsync(
                     column.MetadataId,
-                    CancellationToken.None
+                    token
                 )
+            )
                 .GetAwaiter().GetResult();
             if( dependencies.Count > 0 )
             {

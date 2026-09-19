@@ -9,14 +9,12 @@ internal sealed class StartupScreen
 {
     private const string ApplicationName = "dvtui";
     private const int RefreshIntervalMilliseconds = 80;
-    private const int ConnectionRefreshIntervalMilliseconds = 250;
     private const int ConnectionShutdownTimeoutMilliseconds = 2000;
     private const int FormWidth = 60;
     private readonly UrlTextBox _url;
     private string _message = "Enter: connect | Q: quit";
     private Task? _connection;
     private CancellationTokenSource? _connectionCancellation;
-    private int _frame;
 
     private StartupScreen(string initialUrl)
     {
@@ -64,6 +62,7 @@ internal sealed class StartupScreen
         Func<string, CancellationToken, Task> connect
     )
     {
+        using var progressHost = Progress.Attach();
         var lastSize = (Width: 0, Height: 0);
         while( true )
         {
@@ -88,8 +87,14 @@ internal sealed class StartupScreen
                 }
             }
 
-            while( Console.KeyAvailable )
+            var inputLocked = Progress.DiscardPendingInput("StartupScreen");
+            while( !inputLocked && Console.KeyAvailable )
             {
+                if( Progress.DiscardPendingInput("StartupScreen") )
+                {
+                    break;
+                }
+
                 var key = Console.ReadKey(intercept: true);
                 SessionLog.Key(
                     "StartupScreen",
@@ -126,10 +131,7 @@ internal sealed class StartupScreen
                 lastSize = size;
             }
 
-            var delay = _connection == null
-                ? RefreshIntervalMilliseconds
-                : ConnectionRefreshIntervalMilliseconds;
-            Thread.Sleep(delay);
+            Thread.Sleep(RefreshIntervalMilliseconds);
         }
     }
 
@@ -160,9 +162,10 @@ internal sealed class StartupScreen
         );
         var connectionCancellation = new CancellationTokenSource();
         _connectionCancellation = connectionCancellation;
-        _connection = Task.Run(
-            () => connect(uri.AbsoluteUri, connectionCancellation.Token),
-            connectionCancellation.Token
+        _connection = Progress.Show(
+            "Connecting...",
+            connectionCancellation.Token,
+            token => connect(uri.AbsoluteUri, token)
         );
     }
 
@@ -237,14 +240,13 @@ internal sealed class StartupScreen
         input.Width = formWidth;
 
         var status = connecting
-            ? "Connecting... Sign in in your browser if prompted."
+            ? "Sign in in your browser if prompted."
             : _message;
         var content = new Rows(
             Align.Center(logo),
             Text.Empty,
             input,
-            connecting ? RenderProgress(formWidth) : Text.Empty,
-            new Text(status, TuiColors.SecondaryText)
+            Progress.RenderStatus(formWidth, status, TuiColors.SecondaryText)
         );
 
         var form = new Panel(content)
@@ -257,16 +259,4 @@ internal sealed class StartupScreen
             .Height(height);
     }
 
-    private IRenderable RenderProgress(int width)
-    {
-        var pulseWidth = Math.Min(8, width);
-        var travel = width - pulseWidth;
-        var position = _frame++ % Math.Max(1, travel * 2);
-        var offset = position <= travel ? position : travel * 2 - position;
-        var before = new string('─', offset);
-        var pulse = new string('━', pulseWidth);
-        var after = new string('─', Math.Max(0, width - offset - pulseWidth));
-
-        return new Markup($"[grey23]{before}[/][cyan1]{pulse}[/][grey23]{after}[/]");
-    }
 }

@@ -39,8 +39,17 @@ internal sealed class ConfirmationScreen
             {
                 while( !_cancelled && !_submitted )
                 {
-                    while( Console.KeyAvailable )
+                    var inputLocked = Progress.DiscardPendingInput(
+                        "ConfirmationScreen"
+                    );
+                    while( !inputLocked && Console.KeyAvailable )
                     {
+                        if( Progress.DiscardPendingInput("ConfirmationScreen") )
+                        {
+                            inputLocked = true;
+                            break;
+                        }
+
                         var key = Console.ReadKey(intercept: true);
                         SessionLog.Key("ConfirmationScreen", key, "title=" + _title);
                         HandleKey(key);

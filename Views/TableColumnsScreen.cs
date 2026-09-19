@@ -74,6 +74,11 @@ internal sealed class TableColumnsScreen
 
     public void HandleKey(ConsoleKeyInfo key)
     {
+        if( Progress.IsActive )
+        {
+            return;
+        }
+
         if( _editor != null )
         {
             _editor.HandleKey(key);
@@ -81,6 +86,7 @@ internal sealed class TableColumnsScreen
             if( _editor.PendingAction == FormAction.Close )
             {
                 _editor = null;
+                _detailsFocused = false;
                 _status = BuildColumnStatus();
                 Touch();
             }
@@ -93,9 +99,21 @@ internal sealed class TableColumnsScreen
             return;
         }
 
-        if( key.Key == ConsoleKey.Escape
-            || key.Key == ConsoleKey.Q
-            || key.KeyChar == '\u0003' )
+        if( key.Key == ConsoleKey.Escape )
+        {
+            if( _detailsFocused )
+            {
+                _detailsFocused = false;
+                Touch();
+                return;
+            }
+
+            _pendingAction = TableColumnsAction.Close;
+            Touch();
+            return;
+        }
+
+        if( key.Key == ConsoleKey.Q || key.KeyChar == '\u0003' )
         {
             _pendingAction = TableColumnsAction.Close;
             Touch();
@@ -240,10 +258,14 @@ internal sealed class TableColumnsScreen
             : null;
         try
         {
-            var columns = await _service.GetColumnsAsync(
-                _entity.LogicalName,
-                _entity.MetadataId,
-                cancellationToken
+            var columns = await Progress.Show(
+                "Loading columns...",
+                cancellationToken,
+                token => _service.GetColumnsAsync(
+                    _entity.LogicalName,
+                    _entity.MetadataId,
+                    token
+                )
             );
             if( generation != Volatile.Read(ref _loadGeneration) )
             {
@@ -506,7 +528,11 @@ internal sealed class TableColumnsScreen
         var pending = _sessionPendingChanges
             ? " Pending changes in this session; publish explicitly."
             : string.Empty;
-        return new Text("  " + _status + pending, style);
+        return Progress.RenderStatus(
+            AnsiConsole.Profile.Width,
+            "  " + _status + pending,
+            style
+        );
     }
 
     private string BuildColumnStatus()
@@ -679,7 +705,7 @@ internal sealed class TableColumnsScreen
         if( _editor != null )
         {
             return new Text(
-                "  Tab: next  Shift+Tab: previous  Ctrl+S: save  Esc: cancel edit",
+                "  Tab: next  Shift+Tab: previous  Ctrl+S: save  Esc: list",
                 Style.Parse("dim")
             );
         }
@@ -690,7 +716,7 @@ internal sealed class TableColumnsScreen
         return new Text(
             "  Green: editable  Orange/red: read-only  " + writeHint
                 + "  R: Refresh  "
-            + "Tab: Details  Esc: Back",
+            + "Tab: Details  Esc: list/back",
             Style.Parse("dim")
         );
     }

@@ -46,6 +46,7 @@ internal sealed class CreateTableScreen : IFormScreen
     public FormAction PendingAction => _pendingAction;
     public bool HasError => _hasError;
     public bool OutcomeUnknown => _outcomeUnknown;
+    public string ProgressMessage => "Creating table...";
     public string Status => _status;
     public int Revision => Volatile.Read(ref _revision);
 
@@ -66,6 +67,11 @@ internal sealed class CreateTableScreen : IFormScreen
 
     public void HandleKey(ConsoleKeyInfo key)
     {
+        if( Progress.IsActive )
+        {
+            return;
+        }
+
         if( _submitting )
         {
             return;
@@ -290,7 +296,7 @@ internal sealed class CreateTableScreen : IFormScreen
         return new Layout()
             .SplitRows(
                 new Layout().Update(panel),
-                new Layout().Size(1).Update(RenderStatus()),
+                new Layout().Size(1).Update(RenderStatus(width)),
                 new Layout().Size(1).Update(hint)
             );
     }
@@ -444,14 +450,14 @@ internal sealed class CreateTableScreen : IFormScreen
         return string.IsNullOrEmpty(value) ? "—" : value;
     }
 
-    private IRenderable RenderStatus()
+    private IRenderable RenderStatus(int width)
     {
         var style = _hasError
             ? Style.Parse("red")
             : _submitting
                 ? Style.Parse("yellow")
                 : Style.Parse("green");
-        return new Text("  " + _status, style);
+        return Progress.RenderStatus(width, "  " + _status, style);
     }
 
     private static void AddRow(

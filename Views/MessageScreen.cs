@@ -29,8 +29,17 @@ internal static class MessageScreen
             {
                 while( true )
                 {
-                    while( Console.KeyAvailable )
+                    var inputLocked = Progress.DiscardPendingInput(
+                        "MessageScreen"
+                    );
+                    while( !inputLocked && Console.KeyAvailable )
                     {
+                        if( Progress.DiscardPendingInput("MessageScreen") )
+                        {
+                            inputLocked = true;
+                            break;
+                        }
+
                         var key = Console.ReadKey(intercept: true);
                         SessionLog.Key("MessageScreen", key, "title=" + title);
                         if( key.Key == ConsoleKey.Enter

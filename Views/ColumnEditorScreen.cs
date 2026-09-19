@@ -97,6 +97,9 @@ internal sealed class ColumnEditorScreen : IFormScreen
     public FormAction PendingAction => _pendingAction;
     public bool HasError => _hasError;
     public bool OutcomeUnknown => _outcomeUnknown;
+    public string ProgressMessage => _isEdit
+        ? "Saving column..."
+        : "Creating column...";
     public string Status => _status;
     public bool MutationSucceeded => _mutationSucceeded;
     public int Revision => Volatile.Read(ref _revision);
@@ -118,6 +121,11 @@ internal sealed class ColumnEditorScreen : IFormScreen
 
     public void HandleKey(ConsoleKeyInfo key)
     {
+        if( Progress.IsActive )
+        {
+            return;
+        }
+
         if( _submitting )
         {
             return;
@@ -280,7 +288,7 @@ internal sealed class ColumnEditorScreen : IFormScreen
             .Expand();
         panel.Height = height - 4;
 
-        var status = RenderStatus();
+        var status = RenderStatus(width);
         var hint = new Text(
             "  Tab: next  Shift+Tab: previous  Ctrl+S: save  Esc: back",
             Style.Parse("dim")
@@ -963,14 +971,14 @@ internal sealed class ColumnEditorScreen : IFormScreen
         };
     }
 
-    private IRenderable RenderStatus()
+    private IRenderable RenderStatus(int width)
     {
         var style = _hasError
             ? Style.Parse("red")
             : _submitting
                 ? Style.Parse("yellow")
                 : Style.Parse("green");
-        return new Text("  " + _status, style);
+        return Progress.RenderStatus(width, "  " + _status, style);
     }
 
     private static void AddRow(

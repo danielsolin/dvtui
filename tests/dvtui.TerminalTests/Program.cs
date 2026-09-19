@@ -4,6 +4,7 @@ using dvtui.Models;
 using dvtui.Services;
 using dvtui.Views;
 using dvtui.TerminalTests;
+using Progress = dvtui.Views.Progress;
 
 var mode = args.FirstOrDefault() ?? "solution-selection";
 
@@ -359,6 +360,7 @@ static string RunTableColumnsScreen(
             AnsiConsole.Live(screen.Render())
                 .StartAsync(async ctx =>
                 {
+                    using var progressHost = Progress.Attach();
                     using var cancellation = new CancellationTokenSource();
                     try
                     {
@@ -369,14 +371,27 @@ static string RunTableColumnsScreen(
                         var lastSize = (Width: 0, Height: 0);
                         while( true )
                         {
+                            var refresh = false;
                             if( loadTask != null
                                 && loadTask.IsCompleted )
                             {
                                 loadTask = null;
+                                refresh = true;
                             }
 
-                            while( Console.KeyAvailable )
+                            var inputLocked = Progress.DiscardPendingInput(
+                                "TableColumnsScreen"
+                            );
+                            while( !inputLocked && Console.KeyAvailable )
                             {
+                                if( Progress.DiscardPendingInput(
+                                    "TableColumnsScreen"
+                                ) )
+                                {
+                                    inputLocked = true;
+                                    break;
+                                }
+
                                 var key = Console.ReadKey(
                                     intercept: true
                                 );
@@ -406,7 +421,9 @@ static string RunTableColumnsScreen(
                                 AnsiConsole.Profile.Height
                             );
                             var revision = screen.Revision;
-                            if( revision != lastRevision
+                            if( refresh
+                                || revision != lastRevision
+                                || Progress.IsActive
                                 || size != lastSize )
                             {
                                 ctx.UpdateTarget(screen.Render());
@@ -537,6 +554,7 @@ static async Task RunFormScreen<TScreen>(
 )
     where TScreen : IFormScreen
 {
+    using var progressHost = Progress.Attach();
     using var cancellation = new CancellationTokenSource();
     while( true )
     {
@@ -544,7 +562,10 @@ static async Task RunFormScreen<TScreen>(
         var lastSize = (Width: 0, Height: 0);
         while( screen.PendingAction == FormAction.None )
         {
-            if( Console.KeyAvailable )
+            var inputLocked = Progress.DiscardPendingInput(
+                typeof(TScreen).Name
+            );
+            if( !inputLocked && Console.KeyAvailable )
             {
                 var key = Console.ReadKey(intercept: true);
                 screen.HandleKey(key);
@@ -570,21 +591,16 @@ static async Task RunFormScreen<TScreen>(
             return;
         }
 
-        var submitTask = submit(cancellation.Token);
+        var submitTask = Progress.Show(
+            screen.ProgressMessage,
+            cancellation.Token,
+            submit
+        );
         lastRevision = -1;
         lastSize = (Width: 0, Height: 0);
         while( !submitTask.IsCompleted )
         {
-            while( Console.KeyAvailable )
-            {
-                var key = Console.ReadKey(intercept: true);
-                if( key.Key == ConsoleKey.Escape
-                    || key.KeyChar == '\u0003' )
-                {
-                    screen.RequestCancellation();
-                    cancellation.Cancel();
-                }
-            }
+            Progress.DiscardPendingInput(typeof(TScreen).Name);
 
             var size = (
                 AnsiConsole.Profile.Width,
@@ -592,6 +608,7 @@ static async Task RunFormScreen<TScreen>(
             );
             var revision = screen.Revision;
             if( revision != lastRevision
+                || Progress.IsActive
                 || size != lastSize )
             {
                 context.UpdateTarget(screen.Render());

@@ -63,6 +63,7 @@ internal sealed class SolutionSelectionScreen
         DataverseSolution?[] selected
     )
     {
+        using var progressHost = Progress.Attach();
         using var cancellation = new CancellationTokenSource();
         var pendingLoad = StartLoad(cancellation.Token);
         var lastSize = (Width: 0, Height: 0);
@@ -78,17 +79,36 @@ internal sealed class SolutionSelectionScreen
                     refresh = true;
                 }
 
-                while( Console.KeyAvailable )
+                var inputLocked = Progress.DiscardPendingInput(
+                    "SolutionSelectionScreen"
+                );
+                while( !inputLocked && Console.KeyAvailable )
                 {
+                    if( Progress.DiscardPendingInput("SolutionSelectionScreen") )
+                    {
+                        inputLocked = true;
+                        break;
+                    }
+
                     var key = Console.ReadKey(intercept: true);
                     SessionLog.Key(
                         "SolutionSelectionScreen",
                         key,
                         "pendingLoad=" + (pendingLoad != null)
                     );
-                    if( key.Key == ConsoleKey.Q
-                        || key.Key == ConsoleKey.Escape
-                        || key.KeyChar == '\u0003' )
+                    if( key.Key == ConsoleKey.Q || key.KeyChar == '\u0003' )
+                    {
+                        return;
+                    }
+
+                    if( key.Key == ConsoleKey.Escape && _detailsFocused )
+                    {
+                        _detailsFocused = false;
+                        refresh = true;
+                        continue;
+                    }
+
+                    if( key.Key == ConsoleKey.Escape )
                     {
                         return;
                     }
@@ -116,7 +136,7 @@ internal sealed class SolutionSelectionScreen
                 }
 
                 var size = (AnsiConsole.Profile.Width, AnsiConsole.Profile.Height);
-                if( refresh || size != lastSize )
+                if( refresh || Progress.IsActive || size != lastSize )
                 {
                     context.UpdateTarget(Render());
                     lastSize = size;
@@ -154,9 +174,10 @@ internal sealed class SolutionSelectionScreen
         _loadCancellation = CancellationTokenSource.CreateLinkedTokenSource(
             token
         );
-        return Task.Run(
-            () => _load(_loadCancellation!.Token),
-            _loadCancellation.Token
+        return Progress.Show(
+            "Loading solutions...",
+            _loadCancellation.Token,
+            token => _load(token)
         );
     }
 
@@ -200,6 +221,11 @@ internal sealed class SolutionSelectionScreen
 
     private void HandleKey(ConsoleKeyInfo key)
     {
+        if( Progress.IsActive )
+        {
+            return;
+        }
+
         if( key.Key == ConsoleKey.Tab )
         {
             _detailsFocused = !_detailsFocused;
@@ -270,13 +296,20 @@ internal sealed class SolutionSelectionScreen
 
         return new Layout()
             .SplitRows(
-                new Layout().Size(1).Update(new Text($"DVTUI | {_status}")),
+                new Layout().Size(1).Update(
+                    Progress.RenderStatus(
+                        width,
+                        "DVTUI | " + _status,
+                        Style.Plain
+                    )
+                ),
                 new Layout().SplitColumns(
                     new Layout().Size(sidebarWidth).Update(list),
                     new Layout().Update(details)
                 ),
                 new Layout().Size(1).Update(new Text(
-                    "↑↓: move | PgUp/PgDn | Tab: pane | R: reload | Q: quit"
+                    "↑↓: move | PgUp/PgDn | Tab: pane | "
+                        + "R: reload | Esc: list/back | Q: quit"
                 ))
             );
     }

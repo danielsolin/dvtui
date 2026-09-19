@@ -2,6 +2,7 @@ using System.Globalization;
 using System.Net;
 using dvtui.Models;
 using dvtui.Services;
+using dvtui.Views;
 
 using Microsoft.Xrm.Sdk;
 using Microsoft.Xrm.Sdk.Metadata;
@@ -54,6 +55,7 @@ internal static class ServiceTests
         TestCapabilityPolicyPerPropertyFlags();
         TestCapabilityPolicyTableCreate();
         TestRequirementLevelMapping();
+        TestProgressRemovesCompletedEarlierState();
         return _failures;
     }
 
@@ -1380,6 +1382,42 @@ internal static class ServiceTests
                 == "Business recommended",
             "recommended label"
         );
+    }
+
+    private static void TestProgressRemovesCompletedEarlierState()
+    {
+        using var host = Progress.Attach();
+        var firstRelease = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously
+        );
+        var secondRelease = new TaskCompletionSource(
+            TaskCreationOptions.RunContinuationsAsynchronously
+        );
+        var first = Progress.Show("First", _ => firstRelease.Task);
+        var second = Progress.Show("Second", _ => secondRelease.Task);
+        try
+        {
+            firstRelease.SetResult();
+            first.GetAwaiter().GetResult();
+            Check(
+                Progress.IsActive,
+                "progress keeps newer operation active"
+            );
+
+            secondRelease.SetResult();
+            second.GetAwaiter().GetResult();
+            Check(
+                !Progress.IsActive,
+                "progress clears after overlapping operations"
+            );
+        }
+        finally
+        {
+            firstRelease.TrySetResult();
+            secondRelease.TrySetResult();
+            first.GetAwaiter().GetResult();
+            second.GetAwaiter().GetResult();
+        }
     }
 
     private static StringAttributeMetadata CustomColumn(Guid metadataId)

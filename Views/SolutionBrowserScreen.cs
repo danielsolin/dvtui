@@ -118,6 +118,7 @@ internal sealed class SolutionBrowserScreen
         SolutionBrowserSelection[] result
     )
     {
+        using var progressHost = Progress.Attach();
         using var cancellation = new CancellationTokenSource();
         var pendingLoad = StartLoad(cancellation.Token);
         var lastSize = (Width: 0, Height: 0);
@@ -143,8 +144,17 @@ internal sealed class SolutionBrowserScreen
                     refresh = true;
                 }
 
-                while( Console.KeyAvailable )
+                var inputLocked = Progress.DiscardPendingInput(
+                    "SolutionBrowserScreen"
+                );
+                while( !inputLocked && Console.KeyAvailable )
                 {
+                    if( Progress.DiscardPendingInput("SolutionBrowserScreen") )
+                    {
+                        inputLocked = true;
+                        break;
+                    }
+
                     var key = Console.ReadKey(intercept: true);
                     SessionLog.Key(
                         "SolutionBrowserScreen",
@@ -159,6 +169,13 @@ internal sealed class SolutionBrowserScreen
                             Result = SolutionBrowserResult.Quit
                         };
                         return;
+                    }
+
+                    if( key.Key == ConsoleKey.Escape && _detailsFocused )
+                    {
+                        _detailsFocused = false;
+                        refresh = true;
+                        continue;
                     }
 
                     if( key.Key == ConsoleKey.Escape )
@@ -213,7 +230,7 @@ internal sealed class SolutionBrowserScreen
                 }
 
                 var size = (AnsiConsole.Profile.Width, AnsiConsole.Profile.Height);
-                if( refresh || size != lastSize )
+                if( refresh || Progress.IsActive || size != lastSize )
                 {
                     context.UpdateTarget(Render());
                     lastSize = size;
@@ -272,9 +289,10 @@ internal sealed class SolutionBrowserScreen
         _loadCancellation = CancellationTokenSource.CreateLinkedTokenSource(
             cancellationToken
         );
-        return Task.Run(
-            () => _load(_loadCancellation!.Token),
-            _loadCancellation.Token
+        return Progress.Show(
+            "Loading solution components...",
+            _loadCancellation.Token,
+            token => _load(token)
         );
     }
 
@@ -302,7 +320,7 @@ internal sealed class SolutionBrowserScreen
             _loadFailed = false;
             SelectComponent(cancellationToken);
             _status = _components.Count == 0
-                ? "No components in this solution. N: new table | R: reload | Esc: solutions"
+                ? "No components in this solution. N: new table | R: reload | Esc: list/back"
                 : $"{_components.Count} component rows";
             SessionLog.Info(
                 "UI.SolutionBrowser",
@@ -321,7 +339,7 @@ internal sealed class SolutionBrowserScreen
             );
             _loadFailed = true;
             _components = [];
-            _status = "Could not load components. R: retry | Esc: solutions";
+            _status = "Could not load components. R: retry | Esc: list/back";
             _details = new ScrollableContent(new Text(ex.Message));
         }
     }
@@ -395,6 +413,11 @@ internal sealed class SolutionBrowserScreen
 
     private void HandleKey(ConsoleKeyInfo key, CancellationToken cancellationToken)
     {
+        if( Progress.IsActive )
+        {
+            return;
+        }
+
         if( key.Key == ConsoleKey.Tab )
         {
             _detailsFocused = !_detailsFocused;
@@ -474,9 +497,10 @@ internal sealed class SolutionBrowserScreen
         _detailsCancellation = CancellationTokenSource.CreateLinkedTokenSource(
             cancellationToken
         );
-        _pendingDetails = Task.Run(
-            () => _loadDetails(logicalName, metadataId, _detailsCancellation!.Token),
-            _detailsCancellation.Token
+        _pendingDetails = Progress.Show(
+            "Loading table details...",
+            _detailsCancellation.Token,
+            token => _loadDetails(logicalName, metadataId, token)
         );
     }
 
@@ -504,7 +528,7 @@ internal sealed class SolutionBrowserScreen
         if( width < MinimumWidth || height < MinimumHeight )
         {
             return new Text(
-                "Enlarge the terminal (60 x 10). Q: quit | Esc: solutions."
+                "Enlarge the terminal (60 x 10). Q: quit | Esc: list/back."
             );
         }
 
@@ -542,14 +566,16 @@ internal sealed class SolutionBrowserScreen
             : "N: new (disabled)";
         return new Layout()
             .SplitRows(
-                new Layout().Size(1).Update(new Text(status)),
+                new Layout().Size(1).Update(
+                    Progress.RenderStatus(width, status, Style.Plain)
+                ),
                 new Layout().SplitColumns(
                     new Layout().Size(sidebarWidth).Update(list),
                     new Layout().Update(details)
                 ),
                 new Layout().Size(1).Update(new Text(
                     $"↑↓: move | PgUp/PgDn | Tab: pane | {newTableHint} | "
-                    + "R: reload | Esc: solutions | Q: quit"
+                    + "R: reload | Esc: list/back | Q: quit"
                 ))
             );
     }

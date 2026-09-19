@@ -239,6 +239,9 @@ def test_solution_selection_navigates_and_selects():
         data = read_until(master_fd, "Solutions")
         press_key(master_fd, "\x1b[B")
         data += read_until(master_fd, "Managed")
+        press_key(master_fd, "\t")
+        press_key(master_fd, "\x1b")
+        assert process.poll() is None
         press_key(master_fd, "\r")
         wait_idle(master_fd)
         stop_process(process)
@@ -269,6 +272,7 @@ def test_solution_browser_navigates_and_esc():
         press_key(master_fd, "\x1b[B")
         data += read_until(master_fd, "contact")
         press_key(master_fd, "\x1b")
+        press_key(master_fd, "\x1b")
         wait_idle(master_fd)
         stop_process(process)
         assert "3 component rows" in data
@@ -277,12 +281,28 @@ def test_solution_browser_navigates_and_esc():
         assert "Table: product" in data
         assert "AccountId (primary key)" in data
         assert "Name (primary name)" in data
-        assert "Esc: solutions" in data
+        assert "Esc: list/back" in data
         assert "Q: quit" in data
     finally:
         stop_process(process)
         os.close(master_fd)
     print("solution-browser navigation passed")
+
+
+def test_table_columns_escape_returns_to_list():
+    master_fd, process = start_process("table-columns")
+    try:
+        read_until(master_fd, "2 columns")
+        press_key(master_fd, "E")
+        read_until(master_fd, "Editing new_custom")
+        press_key(master_fd, "\x1b")
+        press_key(master_fd, "D")
+        final = drain_until_exit(master_fd, process)
+        assert "deletecolumn:new_custom" in final
+    finally:
+        stop_process(process)
+        os.close(master_fd)
+    print("table-columns escape focus passed")
 
 
 def test_solution_browser_small_terminal():
@@ -297,7 +317,7 @@ def test_solution_browser_small_terminal():
         assert "3 component rows" in data
         assert "Table: account" in data
         assert "Table: contact" in data
-        assert "Esc: solutions" in data
+        assert "Esc: list/back" in data
     finally:
         stop_process(process)
         os.close(master_fd)
@@ -332,7 +352,7 @@ def test_solution_browser_tall_terminal():
         assert "3 component rows" in data
         assert "Table: account" in data
         assert "Table: contact" in data
-        assert "Esc: solutions" in data
+        assert "Esc: list/back" in data
     finally:
         stop_process(process)
         os.close(master_fd)
@@ -351,7 +371,7 @@ def test_solution_browser_wide_terminal():
         assert "3 component rows" in data
         assert "Table: account" in data
         assert "Table: contact" in data
-        assert "Esc: solutions" in data
+        assert "Esc: list/back" in data
     finally:
         stop_process(process)
         os.close(master_fd)
@@ -370,7 +390,7 @@ def test_solution_browser_wide_small_terminal():
         assert "3 component rows" in data
         assert "Table: account" in data
         assert "Table: contact" in data
-        assert "Esc: solutions" in data
+        assert "Esc: list/back" in data
     finally:
         stop_process(process)
         os.close(master_fd)
@@ -389,7 +409,7 @@ def test_solution_browser_wide_tall_terminal():
         assert "3 component rows" in data
         assert "Table: account" in data
         assert "Table: contact" in data
-        assert "Esc: solutions" in data
+        assert "Esc: list/back" in data
     finally:
         stop_process(process)
         os.close(master_fd)
@@ -408,7 +428,7 @@ def test_solution_browser_wide_tall_small_terminal():
         assert "3 component rows" in data
         assert "Table: account" in data
         assert "Table: contact" in data
-        assert "Esc: solutions" in data
+        assert "Esc: list/back" in data
     finally:
         stop_process(process)
         os.close(master_fd)
@@ -423,6 +443,10 @@ def test_table_columns_navigates_and_deletes():
         assert "2 columns" in data
         assert "new_standard" in data
         assert data.index("new_custom") < data.index("new_standard")
+        press_key(master_fd, "R")
+        time.sleep(0.3)
+        reload_data = read_available(master_fd, 1.0)
+        assert "2 columns." in reload_data
         # Select the deletable column and delete it.
         press_key(master_fd, "D")
         final = drain_until_exit(master_fd, process)
@@ -498,7 +522,7 @@ def test_create_table_submits():
     print("create-table submit passed")
 
 
-def test_create_table_can_cancel():
+def test_create_table_locks_input_during_progress():
     master_fd, process = start_process("create-table-slow")
     try:
         data = read_until(master_fd, "Create table")
@@ -508,16 +532,19 @@ def test_create_table_can_cancel():
             time.sleep(0.05)
         read_bounded(master_fd)
         press_key(master_fd, "\x13")
-        time.sleep(0.3)
-        os.write(master_fd, b"\x1b")
-        final = drain_until_exit(master_fd, process, timeout=5)
-        assert process.poll() is not None
-        assert "Operation cancelled" in final
+        progress = read_until(master_fd, "Creating table...", timeout=3)
+        assert "━" in progress or "─" in progress
+        os.write(master_fd, b"\x1b\rQ")
+        time.sleep(0.5)
+        assert process.poll() is None
+        final = drain_until_exit(master_fd, process, timeout=15)
+        assert "Table created" in final
+        assert "Operation cancelled" not in final
         assert "submit" in final
     finally:
         stop_process(process)
         os.close(master_fd)
-    print("create-table cancellation passed")
+    print("create-table progress input lock passed")
 
 
 def test_column_editor_creates():
@@ -579,11 +606,12 @@ def main():
         test_solution_browser_wide_small_terminal,
         test_solution_browser_wide_tall_terminal,
         test_solution_browser_wide_tall_small_terminal,
+        test_table_columns_escape_returns_to_list,
         test_table_columns_navigates_and_deletes,
         test_table_columns_edits_in_detail_pane,
         test_confirmation_stays_in_tui,
         test_create_table_submits,
-        test_create_table_can_cancel,
+        test_create_table_locks_input_during_progress,
         test_column_editor_creates,
         test_column_editor_edits,
     ]
