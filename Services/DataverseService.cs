@@ -9,7 +9,9 @@ using Label = Microsoft.Xrm.Sdk.Label;
 using OptionSetValue = Microsoft.Xrm.Sdk.OptionSetValue;
 using EntityFilters = Microsoft.Xrm.Sdk.Metadata.EntityFilters;
 using EntityMetadata = Microsoft.Xrm.Sdk.Metadata.EntityMetadata;
+using AttributeMetadata = Microsoft.Xrm.Sdk.Metadata.AttributeMetadata;
 using Entity = Microsoft.Xrm.Sdk.Entity;
+using EntityReference = Microsoft.Xrm.Sdk.EntityReference;
 
 namespace dvtui.Services;
 
@@ -24,7 +26,8 @@ public class DataverseService : IDisposable
         "uniquename",
         "version",
         "ismanaged",
-        "description"
+        "description",
+        "publisherid"
     ];
 
     private static readonly string[] ComponentColumns =
@@ -67,6 +70,11 @@ public class DataverseService : IDisposable
         {
             throw new InvalidOperationException($"Connection failed: {_client.LastError}");
         }
+    }
+
+    public DataverseSchemaService CreateSchemaService()
+    {
+        return new DataverseSchemaService(new ServiceClientExecutor(_client));
     }
 
     public async Task<List<DataverseSolution>> GetSolutionsAsync(
@@ -170,6 +178,140 @@ public class DataverseService : IDisposable
         };
     }
 
+    public virtual async Task<IReadOnlyList<DataverseColumn>> GetColumnsAsync(
+        string logicalName,
+        Guid metadataId,
+        CancellationToken cancellationToken
+    )
+    {
+        if( string.IsNullOrWhiteSpace(logicalName) )
+        {
+            throw new ArgumentException(
+                "A table logical name is required.",
+                nameof(logicalName)
+            );
+        }
+
+        if( metadataId == Guid.Empty )
+        {
+            throw new ArgumentException(
+                "A table metadata ID is required.",
+                nameof(metadataId)
+            );
+        }
+
+        var request = new RetrieveEntityRequest
+        {
+            EntityFilters = EntityFilters.Entity | EntityFilters.Attributes,
+            LogicalName = logicalName,
+            MetadataId = metadataId,
+            RetrieveAsIfPublished = false
+        };
+
+        var response = (RetrieveEntityResponse)await _client.ExecuteAsync(
+            request,
+            cancellationToken
+        );
+        var metadata = response.EntityMetadata;
+        var columns = new List<DataverseColumn>();
+        if( metadata.Attributes == null )
+        {
+            return columns;
+        }
+
+        foreach( var attribute in metadata.Attributes )
+        {
+            columns.Add(CreateColumn(attribute));
+        }
+
+        return columns
+            .OrderBy(column => column.SchemaName, StringComparer.Ordinal)
+            .ToList();
+    }
+
+    public virtual Task<Guid> CreateTableAsync(
+        CreateTableRequest request,
+        CancellationToken cancellationToken
+    )
+    {
+        return CreateSchemaService().CreateTableAsync(
+            request,
+            cancellationToken
+        );
+    }
+
+    public virtual Task<Guid> CreateColumnAsync(
+        CreateColumnRequest request,
+        CancellationToken cancellationToken
+    )
+    {
+        return CreateSchemaService().CreateColumnAsync(
+            request,
+            cancellationToken
+        );
+    }
+
+    public virtual Task<ColumnUpdateResult> UpdateColumnAsync(
+        UpdateColumnRequest request,
+        CancellationToken cancellationToken
+    )
+    {
+        return CreateSchemaService().UpdateColumnAsync(
+            request,
+            cancellationToken
+        );
+    }
+
+    public Task<IReadOnlyList<DependencyInfo>> GetColumnDeleteDependenciesAsync(
+        Guid columnMetadataId,
+        CancellationToken cancellationToken
+    )
+    {
+        return CreateSchemaService().GetColumnDeleteDependenciesAsync(
+            columnMetadataId,
+            cancellationToken
+        );
+    }
+
+    public Task DeleteColumnAsync(
+        string tableLogicalName,
+        string columnLogicalName,
+        Guid expectedMetadataId,
+        CancellationToken cancellationToken
+    )
+    {
+        return CreateSchemaService().DeleteColumnAsync(
+            tableLogicalName,
+            columnLogicalName,
+            expectedMetadataId,
+            cancellationToken
+        );
+    }
+
+    public Task PublishTableAsync(
+        string tableLogicalName,
+        CancellationToken cancellationToken
+    )
+    {
+        return CreateSchemaService().PublishTableAsync(
+            tableLogicalName,
+            cancellationToken
+        );
+    }
+
+    public Task DeleteTableAsync(
+        string tableLogicalName,
+        Guid tableMetadataId,
+        CancellationToken cancellationToken
+    )
+    {
+        return CreateSchemaService().DeleteTableAsync(
+            tableLogicalName,
+            tableMetadataId,
+            cancellationToken
+        );
+    }
+
     private async Task<List<Entity>> RetrieveAllAsync(
         QueryExpression query,
         CancellationToken cancellationToken
@@ -207,7 +349,9 @@ public class DataverseService : IDisposable
             IsManaged = entity.Contains("ismanaged")
                 ? entity.GetAttributeValue<bool>("ismanaged")
                 : null,
-            Description = entity.GetAttributeValue<string>("description") ?? string.Empty
+            Description = entity.GetAttributeValue<string>("description") ?? string.Empty,
+            PublisherId = entity.GetAttributeValue<EntityReference>(
+                "publisherid")?.Id ?? Guid.Empty
         };
     }
 
@@ -384,6 +528,11 @@ public class DataverseService : IDisposable
         return label?.UserLocalizedLabel?.Label
             ?? label?.LocalizedLabels.FirstOrDefault()?.Label
             ?? string.Empty;
+    }
+
+    private static DataverseColumn CreateColumn(AttributeMetadata metadata)
+    {
+        return DataverseSchemaService.CreateColumn(metadata);
     }
 
     public void Dispose()

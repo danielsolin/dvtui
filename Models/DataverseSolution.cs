@@ -8,4 +8,5 @@ public sealed class DataverseSolution
     public string Version { get; init; } = string.Empty;
     public bool? IsManaged { get; init; }
     public string Description { get; init; } = string.Empty;
+    public Guid PublisherId { get; init; }
 }

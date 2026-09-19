@@ -8,7 +8,15 @@ namespace dvtui.Views;
 internal enum SolutionBrowserResult
 {
     BackToSolutions,
-    Quit
+    Quit,
+    OpenColumns,
+    CreateTable
+}
+
+internal sealed class SolutionBrowserSelection
+{
+    public SolutionBrowserResult Result { get; init; }
+    public DataverseEntity? Entity { get; init; }
 }
 
 internal sealed class SolutionBrowserScreen
@@ -48,7 +56,7 @@ internal sealed class SolutionBrowserScreen
         _loadDetails = loadDetails;
     }
 
-    public static SolutionBrowserResult Show(
+    public static SolutionBrowserSelection Show(
         DataverseSolution solution,
         Func<Guid, CancellationToken, Task<List<DataverseSolutionComponent>>>
             load,
@@ -60,7 +68,10 @@ internal sealed class SolutionBrowserScreen
             AnsiConsole.WriteLine(
                 "The solution browser needs an interactive terminal."
             );
-            return SolutionBrowserResult.Quit;
+            return new SolutionBrowserSelection
+            {
+                Result = SolutionBrowserResult.Quit
+            };
         }
 
         var screen = new SolutionBrowserScreen(
@@ -69,7 +80,7 @@ internal sealed class SolutionBrowserScreen
             loadDetails
         );
         var previousControlCMode = Console.TreatControlCAsInput;
-        var result = new SolutionBrowserResult[1];
+        var result = new SolutionBrowserSelection[1];
         AnsiConsole.AlternateScreen(() =>
         {
             Console.TreatControlCAsInput = true;
@@ -77,7 +88,9 @@ internal sealed class SolutionBrowserScreen
             try
             {
                 AnsiConsole.Live(screen.Render())
-                    .StartAsync(context => screen.RunAsync(context, result))
+                    .StartAsync(
+                        context => screen.RunAsync(context, result)
+                    )
                     .GetAwaiter()
                     .GetResult();
             }
@@ -93,7 +106,7 @@ internal sealed class SolutionBrowserScreen
 
     private async Task RunAsync(
         LiveDisplayContext context,
-        SolutionBrowserResult[] result
+        SolutionBrowserSelection[] result
     )
     {
         using var cancellation = new CancellationTokenSource();
@@ -126,14 +139,43 @@ internal sealed class SolutionBrowserScreen
                     var key = Console.ReadKey(intercept: true);
                     if( key.Key == ConsoleKey.Q || key.KeyChar == '\u0003' )
                     {
-                        result[0] = SolutionBrowserResult.Quit;
+                        result[0] = new SolutionBrowserSelection
+                        {
+                            Result = SolutionBrowserResult.Quit
+                        };
                         return;
                     }
 
                     if( key.Key == ConsoleKey.Escape )
                     {
-                        result[0] = SolutionBrowserResult.BackToSolutions;
+                        result[0] = new SolutionBrowserSelection
+                        {
+                            Result = SolutionBrowserResult.BackToSolutions
+                        };
                         return;
+                    }
+
+                    if( key.Key == ConsoleKey.N )
+                    {
+                        result[0] = new SolutionBrowserSelection
+                        {
+                            Result = SolutionBrowserResult.CreateTable
+                        };
+                        return;
+                    }
+
+                    if( key.Key == ConsoleKey.Enter )
+                    {
+                        var entity = GetSelectedEntity();
+                        if( entity != null )
+                        {
+                            result[0] = new SolutionBrowserSelection
+                            {
+                                Result = SolutionBrowserResult.OpenColumns,
+                                Entity = entity
+                            };
+                            return;
+                        }
                     }
 
                     if( key.Key == ConsoleKey.R && pendingLoad == null )
@@ -228,7 +270,7 @@ internal sealed class SolutionBrowserScreen
             _loadFailed = false;
             SelectComponent(cancellationToken);
             _status = _components.Count == 0
-                ? "No components found in this solution. R: reload | Esc: solutions"
+                ? "No components in this solution. N: new table | R: reload | Esc: solutions"
                 : $"{_components.Count} component rows";
         }
         catch( OperationCanceledException ) when( cancellationToken.IsCancellationRequested )
@@ -286,6 +328,23 @@ internal sealed class SolutionBrowserScreen
             && _components.Count > 0
             && _selected < _components.Count
             && request.Value.ComponentId == _components[_selected].Id;
+    }
+
+    private DataverseEntity? GetSelectedEntity()
+    {
+        if( _components.Count == 0 )
+        {
+            return null;
+        }
+
+        var component = _components[_selected];
+        if( component.ComponentType != SolutionComponentTypes.Entity
+            || component.Entity == null )
+        {
+            return null;
+        }
+
+        return component.Entity;
     }
 
     private void HandleKey(ConsoleKeyInfo key, CancellationToken cancellationToken)
@@ -431,8 +490,8 @@ internal sealed class SolutionBrowserScreen
                     new Layout().Update(details)
                 ),
                 new Layout().Size(1).Update(new Text(
-                    "↑↓: move | PgUp/PgDn | Tab: pane | R: reload | "
-                    + "Esc: solutions | Q: quit"
+                    "↑↓: move | PgUp/PgDn | Tab: pane | N: new | "
+                    + "R: reload | Esc: solutions | Q: quit"
                 ))
             );
     }

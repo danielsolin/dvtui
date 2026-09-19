@@ -16,7 +16,15 @@ from pathlib import Path
 
 
 ROOT = Path(__file__).resolve().parents[1]
-BINARY = ROOT / "tests" / "dvtui.TerminalTests" / "bin" / "Debug" / "net10.0" / "dvtui.TerminalTests.dll"
+BINARY = (
+    ROOT
+    / "tests"
+    / "dvtui.TerminalTests"
+    / "bin"
+    / "Debug"
+    / "net10.0"
+    / "dvtui.TerminalTests.dll"
+)
 TEST_SIZE = (80, 24)
 SMALL_SIZE = (58, 12)
 PROMPT = "DVTUI | 3 entities | Esc: back | Q: quit"
@@ -96,6 +104,54 @@ def read_available(fd, seconds=0.5):
             break
         data += chunk
         seconds = 0.1
+    return data.decode(errors="ignore")
+
+
+def read_bounded(fd, max_iter=60, seconds=0.1):
+    """Read with a hard iteration cap. Safe for Live-loop screens that
+    repaint continuously, where read_available could loop forever."""
+    data = b""
+    for _ in range(max_iter):
+        ready, _, _ = select.select([fd], [], [], seconds)
+        if not ready:
+            break
+        try:
+            chunk = os.read(fd, 4096)
+        except OSError:
+            break
+        if not chunk:
+            break
+        data += chunk
+    return data.decode(errors="ignore")
+
+
+def drain_until_exit(fd, process, timeout=5):
+    """Read until the process exits, returning the final output."""
+    data = b""
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        if process.poll() is not None:
+            while True:
+                ready, _, _ = select.select([fd], [], [], 0.3)
+                if not ready:
+                    break
+                try:
+                    chunk = os.read(fd, 4096)
+                except OSError:
+                    break
+                if not chunk:
+                    break
+                data += chunk
+            break
+        ready, _, _ = select.select([fd], [], [], 0.3)
+        if ready:
+            try:
+                chunk = os.read(fd, 4096)
+            except OSError:
+                break
+            if not chunk:
+                break
+            data += chunk
     return data.decode(errors="ignore")
 
 
@@ -287,6 +343,84 @@ def test_solution_browser_wide_tall_small_terminal():
     print("solution-browser wide tall small terminal passed")
 
 
+def test_table_columns_navigates_and_deletes():
+    master_fd, process = start_process("table-columns")
+    try:
+        data = read_until(master_fd, "new_custom")
+        data += read_until(master_fd, "new_standard")
+        assert "2 columns" in data
+        # Select the deletable column and delete it.
+        press_key(master_fd, "D")
+        final = drain_until_exit(master_fd, process)
+        assert "deletecolumn:new_custom" in final
+    finally:
+        stop_process(process)
+        os.close(master_fd)
+    print("table-columns navigation passed")
+
+
+def test_create_table_submits():
+    master_fd, process = start_process("create-table")
+    try:
+        data = read_until(master_fd, "Create table")
+        data += read_until(master_fd, "Publisher prefix")
+        for char in b"Test Table":
+            os.write(master_fd, bytes([char]))
+            time.sleep(0.05)
+        read_bounded(master_fd)
+        press_key(master_fd, "\r")
+        final = drain_until_exit(master_fd, process)
+        assert "Table created" in final
+        assert "submit" in final
+    finally:
+        stop_process(process)
+        os.close(master_fd)
+    print("create-table submit passed")
+
+
+def test_column_editor_creates():
+    master_fd, process = start_process("column-editor")
+    try:
+        data = read_until(master_fd, "Create column")
+        data += read_until(master_fd, "Display name")
+        for char in b"New Field":
+            os.write(master_fd, bytes([char]))
+            time.sleep(0.05)
+        read_bounded(master_fd)
+        press_key(master_fd, "\r")
+        final = drain_until_exit(master_fd, process)
+        assert "Column created" in final
+        assert "submit" in final
+    finally:
+        stop_process(process)
+        os.close(master_fd)
+    print("column-editor create passed")
+
+
+def test_column_editor_edits():
+    master_fd, process = start_process("column-editor-edit")
+    try:
+        data = read_until(master_fd, "Edit column")
+        data += read_until(master_fd, "new_custom")
+        # Clear the display name and type a new one.
+        for _ in range(20):
+            os.write(master_fd, b"\x7f")
+            time.sleep(0.03)
+        read_bounded(master_fd)
+        for char in b"Custom Renamed":
+            os.write(master_fd, bytes([char]))
+            time.sleep(0.05)
+        read_bounded(master_fd)
+        press_key(master_fd, "\r")
+        final = drain_until_exit(master_fd, process)
+        assert "Column saved" in final
+        assert "submit" in final
+    finally:
+        stop_process(process)
+        os.close(master_fd)
+    print("column-editor edit passed")
+
+
 def main():
     if not BINARY.exists():
         raise SystemExit(f"Test host not found: {BINARY}")
@@ -299,6 +433,10 @@ def main():
         test_solution_browser_wide_small_terminal,
         test_solution_browser_wide_tall_terminal,
         test_solution_browser_wide_tall_small_terminal,
+        test_table_columns_navigates_and_deletes,
+        test_create_table_submits,
+        test_column_editor_creates,
+        test_column_editor_edits,
     ]
     for test in tests:
         test()
