@@ -1,6 +1,7 @@
 Microsoft.VisualStudio.Web.CodeGeneration.Design
 bin/
 obj/
+tmp/
 .vs/
 .vscode/
 *.user

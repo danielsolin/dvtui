@@ -24,14 +24,14 @@ internal sealed class SolutionBrowserScreen
     private const int RefreshIntervalMilliseconds = 80;
     private const int MinimumWidth = 60;
     private const int MinimumHeight = 10;
-    private const int SidebarWidthDivisor = 4;
-    private const int PanelHorizontalOverhead = 4;
     private const int ShutdownTimeoutMilliseconds = 2000;
     private readonly DataverseSolution _solution;
     private readonly Func<CancellationToken, Task<List<DataverseSolutionComponent>>>
         _load;
     private readonly Func<string, Guid, CancellationToken, Task<DataverseEntityDetails>>
         _loadDetails;
+    private readonly bool _canWrite;
+    private readonly string _writeDisabledReason;
     private List<DataverseSolutionComponent> _components = [];
     private ScrollableContent? _details;
     private string _status = "Loading components...";
@@ -41,6 +41,7 @@ internal sealed class SolutionBrowserScreen
     private Task<DataverseEntityDetails>? _pendingDetails;
     private CancellationTokenSource? _detailsCancellation;
     private CancellationTokenSource? _loadCancellation;
+    private Guid? _reloadSelectionId;
     private int _selected;
     private int _firstVisible;
     private bool _detailsFocused;
@@ -48,19 +49,27 @@ internal sealed class SolutionBrowserScreen
     private SolutionBrowserScreen(
         DataverseSolution solution,
         Func<CancellationToken, Task<List<DataverseSolutionComponent>>> load,
-        Func<string, Guid, CancellationToken, Task<DataverseEntityDetails>> loadDetails
+        Func<string, Guid, CancellationToken, Task<DataverseEntityDetails>> loadDetails,
+        bool canWrite,
+        string? writeDisabledReason
     )
     {
         _solution = solution;
         _load = load;
         _loadDetails = loadDetails;
+        _canWrite = canWrite;
+        _writeDisabledReason = string.IsNullOrWhiteSpace(writeDisabledReason)
+            ? "Solution is read-only."
+            : writeDisabledReason;
     }
 
     public static SolutionBrowserSelection Show(
         DataverseSolution solution,
         Func<Guid, CancellationToken, Task<List<DataverseSolutionComponent>>>
             load,
-        Func<string, Guid, CancellationToken, Task<DataverseEntityDetails>> loadDetails
+        Func<string, Guid, CancellationToken, Task<DataverseEntityDetails>> loadDetails,
+        bool canWrite = true,
+        string? writeDisabledReason = null
     )
     {
         if( Console.IsInputRedirected || Console.IsOutputRedirected )
@@ -77,7 +86,9 @@ internal sealed class SolutionBrowserScreen
         var screen = new SolutionBrowserScreen(
             solution,
             token => load(solution.Id, token),
-            loadDetails
+            loadDetails,
+            canWrite,
+            writeDisabledReason
         );
         var previousControlCMode = Console.TreatControlCAsInput;
         var result = new SolutionBrowserSelection[1];
@@ -157,6 +168,13 @@ internal sealed class SolutionBrowserScreen
 
                     if( key.Key == ConsoleKey.N )
                     {
+                        if( !_canWrite )
+                        {
+                            _status = _writeDisabledReason;
+                            refresh = true;
+                            continue;
+                        }
+
                         result[0] = new SolutionBrowserSelection
                         {
                             Result = SolutionBrowserResult.CreateTable
@@ -235,6 +253,10 @@ internal sealed class SolutionBrowserScreen
         CancellationToken cancellationToken
     )
     {
+        _reloadSelectionId = _components.Count > 0
+            && _selected < _components.Count
+            ? _components[_selected].Id
+            : null;
         _generation++;
         _status = "Loading components...";
         _loadFailed = false;
@@ -265,8 +287,14 @@ internal sealed class SolutionBrowserScreen
                 .ThenBy(component => GetSortName(component), StringComparer.Ordinal)
                 .ThenBy(component => component.Id)
                 .ToList();
-            _selected = 0;
+            var refreshedIndex = _reloadSelectionId.HasValue
+                ? _components.FindIndex(
+                    component => component.Id == _reloadSelectionId.Value
+                )
+                : -1;
+            _selected = refreshedIndex >= 0 ? refreshedIndex : 0;
             _firstVisible = 0;
+            _reloadSelectionId = null;
             _loadFailed = false;
             SelectComponent(cancellationToken);
             _status = _components.Count == 0
@@ -462,8 +490,10 @@ internal sealed class SolutionBrowserScreen
             );
         }
 
-        var sidebarWidth = width / SidebarWidthDivisor;
-        var list = new Panel(RenderComponents(sidebarWidth - PanelHorizontalOverhead))
+        var sidebarWidth = TuiLayout.GetSidebarWidth(width);
+        var list = new Panel(
+            RenderComponents(sidebarWidth - TuiLayout.PanelHorizontalOverhead)
+        )
             .Header("Components")
             .RoundedBorder()
             .BorderColor(_detailsFocused ? Color.Grey : Color.Grey58)
@@ -482,15 +512,25 @@ internal sealed class SolutionBrowserScreen
             .Expand();
         details.Height = height - 2;
 
+        var status = "DVTUI | " + _status
+            + " | Solution: " + _solution.UniqueName;
+        if( !_canWrite )
+        {
+            status += " | Writes disabled: " + _writeDisabledReason;
+        }
+
+        var newTableHint = _canWrite
+            ? "N: new"
+            : "N: new (disabled)";
         return new Layout()
             .SplitRows(
-                new Layout().Size(1).Update(new Text($"DVTUI | {_status}")),
+                new Layout().Size(1).Update(new Text(status)),
                 new Layout().SplitColumns(
                     new Layout().Size(sidebarWidth).Update(list),
                     new Layout().Update(details)
                 ),
                 new Layout().Size(1).Update(new Text(
-                    "↑↓: move | PgUp/PgDn | Tab: pane | N: new | "
+                    $"↑↓: move | PgUp/PgDn | Tab: pane | {newTableHint} | "
                     + "R: reload | Esc: solutions | Q: quit"
                 ))
             );

@@ -29,7 +29,9 @@ var entity = new DataverseEntity
     DisplayName = "Accounts",
     Description = "Customer accounts",
     PrimaryIdAttribute = "accountid",
-    PrimaryNameAttribute = "name"
+    PrimaryNameAttribute = "name",
+    IsCustomizable = true,
+    CanCreateAttributes = true
 };
 var contact = new DataverseEntity
 {
@@ -145,8 +147,9 @@ if( mode == "solution-selection" )
     return 0;
 }
 
-if( mode == "solution-browser" )
+if( mode == "solution-browser" || mode == "solution-browser-readonly" )
 {
+    var browserCanWrite = mode == "solution-browser";
     var result = SolutionBrowserScreen.Show(
         solution,
         (id, token) =>
@@ -164,7 +167,9 @@ if( mode == "solution-browser" )
                     Fields = fields
                 }
             );
-        }
+        },
+        browserCanWrite,
+        browserCanWrite ? null : ColumnCapabilityPolicy.ReasonManagedSolution
     );
     Console.WriteLine(result);
     return 0;
@@ -240,7 +245,7 @@ SolutionWriteContext BuildWriteContext()
         IsManaged = false,
         PublisherId = Guid.NewGuid(),
         PublisherPrefix = "crtest",
-        BaseLanguage = "en-US",
+        BaseLanguage = "1033",
         EnvironmentUrl = "https://test.crm.dynamics.com"
     };
 }
@@ -267,6 +272,7 @@ FakeDataverseService BuildFakeService(
                 IsManaged = false,
                 IsPrimaryId = false,
                 IsPrimaryName = false,
+                IsLogical = false,
                 IsCustomizable = true,
                 IsRenameable = true,
                 CanModifyAdditionalSettings = true,
@@ -285,6 +291,7 @@ FakeDataverseService BuildFakeService(
                 IsManaged = true,
                 IsPrimaryId = false,
                 IsPrimaryName = false,
+                IsLogical = false,
                 IsCustomizable = false,
                 IsRenameable = false,
                 CanModifyAdditionalSettings = false,
@@ -351,7 +358,8 @@ static string RunTableColumnsScreen(
                                 var key = Console.ReadKey(
                                     intercept: true
                                 );
-                                if( key.Key == ConsoleKey.R )
+                                if( key.Key == ConsoleKey.R
+                                    && loadTask == null )
                                 {
                                     loadTask = screen.LoadAsync(
                                         cancellation.Token
@@ -462,6 +470,7 @@ static string RunColumnEditorScreen(
         service,
         context,
         entity.LogicalName,
+        entity.MetadataId,
         existing
     );
     if( Console.IsInputRedirected || Console.IsOutputRedirected )
@@ -572,6 +581,11 @@ static async Task RunFormScreen<TScreen>(
 
         await submitTask;
         context.UpdateTarget(screen.Render());
+        if( screen.OutcomeUnknown )
+        {
+            return;
+        }
+
         if( screen.HasError )
         {
             screen.ResetForRetry();

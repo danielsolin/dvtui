@@ -58,22 +58,24 @@ internal sealed class FakeDataverseService : DataverseService
         cancellationToken.ThrowIfCancellationRequested();
         await WaitForOperationAsync(cancellationToken);
         var metadataId = Guid.NewGuid();
+        var logicalName = request.Context.PublisherPrefix
+            + "_"
+            + request.SchemaSuffix;
         var column = new DataverseColumn
         {
             MetadataId = metadataId,
-            LogicalName = request.SchemaSuffix,
-            SchemaName = request.SchemaSuffix,
+            LogicalName = logicalName,
+            SchemaName = logicalName,
             DisplayName = request.DisplayName,
             Description = request.Description ?? string.Empty,
             Kind = request.Kind,
             MaxLength = request.MaxLength,
-            MinValue = request.MinValue.HasValue
-                ? (int)request.MinValue.Value
-                : null,
-            MaxValue = request.MaxValue.HasValue
-                ? (int)request.MaxValue.Value
-                : null,
+            MinValue = request.MinValue,
+            MaxValue = request.MaxValue,
             Precision = request.Precision,
+            BooleanDefaultValue = request.BooleanDefaultValue,
+            BooleanTrueLabel = request.BooleanTrueLabel,
+            BooleanFalseLabel = request.BooleanFalseLabel,
             IsCustom = true,
             IsManaged = false,
             IsPrimaryId = false,
@@ -81,8 +83,16 @@ internal sealed class FakeDataverseService : DataverseService
             IsCustomizable = true,
             IsRenameable = true,
             CanModifyAdditionalSettings = true,
+            CanChangeRequirement = true,
             RequirementLevel = request.RequirementLevel,
-            AttributeTypeCode = request.Kind.ToString()
+            AttributeTypeCode = request.Kind.ToString(),
+            AttributeFormat = request.Kind switch
+            {
+                ColumnKind.Text => "Text",
+                ColumnKind.MultilineText => "TextArea",
+                ColumnKind.WholeNumber => "None",
+                _ => null
+            }
         };
         if( _tableIds.TryGetValue(
             request.TableLogicalName,
@@ -139,13 +149,18 @@ internal sealed class FakeDataverseService : DataverseService
                     IsRenameable = current.IsRenameable,
                     CanModifyAdditionalSettings =
                         current.CanModifyAdditionalSettings,
+                    CanChangeRequirement = current.CanChangeRequirement,
                     RequirementLevel = request.SetRequirementLevel
                         ? request.RequirementLevel
                         : current.RequirementLevel,
                     AttributeTypeCode = current.AttributeTypeCode,
+                    AttributeFormat = current.AttributeFormat,
                     IsLogical = current.IsLogical,
                     SourceType = current.SourceType,
-                    AutoNumberFormat = current.AutoNumberFormat
+                    AutoNumberFormat = current.AutoNumberFormat,
+                    BooleanDefaultValue = current.BooleanDefaultValue,
+                    BooleanTrueLabel = current.BooleanTrueLabel,
+                    BooleanFalseLabel = current.BooleanFalseLabel
                 };
                 return new ColumnUpdateResult
                 {

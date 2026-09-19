@@ -25,6 +25,8 @@ public static class ColumnCapabilityPolicy
         "Column capability is unknown; no write is allowed";
     public const string ReasonTableNotCustomizable =
         "Table does not allow new columns";
+    public const string ReasonTableCannotCreateAttributes =
+        "Table does not allow new columns";
     public const string ReasonUnknownTable =
         "Table capability is unknown; no write is allowed";
 
@@ -54,9 +56,37 @@ public static class ColumnCapabilityPolicy
             };
         }
 
+        if( !string.IsNullOrWhiteSpace(column.AttributeOf)
+            || column.IsLogical == true
+            || column.SourceType > 0
+            || !string.IsNullOrWhiteSpace(column.AutoNumberFormat)
+            || IsSpecializedFormat(column) )
+        {
+            return new ColumnCapability
+            {
+                CanCreateColumn = false,
+                CanEdit = false,
+                CanDelete = false,
+                EditReason = ReasonSpecialized,
+                DeleteReason = ReasonSpecialized
+            };
+        }
+
         var supported = IsSupportedKind(column);
-        var isCustom = column.IsCustom == true;
-        var isManaged = column.IsManaged == true;
+        if( column.IsCustom == null || column.IsManaged == null )
+        {
+            return new ColumnCapability
+            {
+                CanCreateColumn = false,
+                CanEdit = false,
+                CanDelete = false,
+                EditReason = ReasonUnknown,
+                DeleteReason = ReasonUnknown
+            };
+        }
+
+        var isCustom = column.IsCustom.Value;
+        var isManaged = column.IsManaged.Value;
         var renameable = column.IsRenameable == true;
         var customizable = column.IsCustomizable == true;
         var canModifySettings = column.CanModifyAdditionalSettings == true;
@@ -97,6 +127,18 @@ public static class ColumnCapabilityPolicy
             };
         }
 
+        if( column.IsCustomizable == null )
+        {
+            return new ColumnCapability
+            {
+                CanCreateColumn = false,
+                CanEdit = false,
+                CanDelete = false,
+                EditReason = ReasonUnknown,
+                DeleteReason = ReasonUnknown
+            };
+        }
+
         if( !customizable )
         {
             return new ColumnCapability
@@ -111,7 +153,8 @@ public static class ColumnCapabilityPolicy
 
         var canEditDisplayName = renameable;
         var canEditDescription = canModifySettings;
-        var canEditRequirement = canModifySettings;
+        var canEditRequirement = canModifySettings
+            && column.CanChangeRequirement == true;
         var canIncreaseLength = canModifySettings
             && (column.Kind == ColumnKind.Text
                 || column.Kind == ColumnKind.MultilineText);
@@ -152,15 +195,30 @@ public static class ColumnCapabilityPolicy
         bool? canCreateAttributes
     )
     {
-        if( isCustomizable != true || canCreateAttributes != true )
+        if( isCustomizable == false )
         {
-            var reason = isCustomizable != true
-                ? ReasonTableNotCustomizable
-                : ReasonUnknownTable;
             return new ColumnCapability
             {
                 CanCreateColumn = false,
-                CreateColumnReason = reason
+                CreateColumnReason = ReasonTableNotCustomizable
+            };
+        }
+
+        if( canCreateAttributes == false )
+        {
+            return new ColumnCapability
+            {
+                CanCreateColumn = false,
+                CreateColumnReason = ReasonTableCannotCreateAttributes
+            };
+        }
+
+        if( isCustomizable != true || canCreateAttributes != true )
+        {
+            return new ColumnCapability
+            {
+                CanCreateColumn = false,
+                CreateColumnReason = ReasonUnknownTable
             };
         }
 
@@ -182,5 +240,38 @@ public static class ColumnCapabilityPolicy
         }
 
         return false;
+    }
+
+    private static bool IsSpecializedFormat(DataverseColumn column)
+    {
+        if( string.IsNullOrWhiteSpace(column.AttributeFormat) )
+        {
+            return false;
+        }
+
+        return column.Kind switch
+        {
+            ColumnKind.Text => !string.Equals(
+                column.AttributeFormat,
+                "Text",
+                StringComparison.OrdinalIgnoreCase
+            ),
+            ColumnKind.MultilineText => !string.Equals(
+                    column.AttributeFormat,
+                    "Text",
+                    StringComparison.OrdinalIgnoreCase
+                )
+                && !string.Equals(
+                    column.AttributeFormat,
+                    "TextArea",
+                    StringComparison.OrdinalIgnoreCase
+                ),
+            ColumnKind.WholeNumber => !string.Equals(
+                column.AttributeFormat,
+                "None",
+                StringComparison.OrdinalIgnoreCase
+            ),
+            _ => false
+        };
     }
 }

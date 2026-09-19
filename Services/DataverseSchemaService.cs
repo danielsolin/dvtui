@@ -26,21 +26,26 @@ public sealed class DataverseSchemaService
     private const int MaxDisplayLength = 125;
     private const int MaxDescriptionLength = 4000;
     private const int MinTextLength = 1;
-    private const int MaxTextLength = 8000;
+    private const int MaxTextLength = ColumnDefaults.TextMaxLength;
     private const int MinMemoLength = 1;
-    private const int MaxMemoLength = 32000;
+    private const int MaxMemoLength = ColumnDefaults.MultilineMaxLength;
     private const int MinPrecision = 0;
-    private const int MaxPrecision = 23;
-    private const int IntMin = int.MinValue;
-    private const int IntMax = int.MaxValue;
-    private const decimal DecMin = -1000000000000m;
-    private const decimal DecMax = 1000000000000m;
+    private const int MaxPrecision = DecimalAttributeMetadata.MaxSupportedPrecision;
+    private const int IntMin = ColumnDefaults.WholeNumberLowerBound;
+    private const int IntMax = ColumnDefaults.WholeNumberUpperBound;
+    private const decimal DecMin = ColumnDefaults.DecimalLowerBound;
+    private const decimal DecMax = ColumnDefaults.DecimalUpperBound;
 
     private readonly IDataverseExecutor _client;
+    private readonly string _environmentUrl;
 
-    public DataverseSchemaService(IDataverseExecutor client)
+    public DataverseSchemaService(
+        IDataverseExecutor client,
+        string environmentUrl = ""
+    )
     {
         _client = client;
+        _environmentUrl = environmentUrl;
     }
 
     public async Task<SolutionWriteContext> LoadWriteContextAsync(
@@ -50,8 +55,17 @@ public sealed class DataverseSchemaService
     {
         if( solution.IsManaged == true )
         {
-            throw new InvalidOperationException(
+            return CreateReadOnlyContext(
+                solution,
                 ColumnCapabilityPolicy.ReasonManagedSolution
+            );
+        }
+
+        if( solution.IsManaged != false )
+        {
+            return CreateReadOnlyContext(
+                solution,
+                "Solution management state is unknown; writes are disabled."
             );
         }
 
@@ -79,6 +93,12 @@ public sealed class DataverseSchemaService
         var publisherId = publisher.GetAttributeValue<Guid>("publisherid");
         var prefix = publisher.GetAttributeValue<string>(
             "customizationprefix") ?? string.Empty;
+        if( publisherId == Guid.Empty || string.IsNullOrWhiteSpace(prefix) )
+        {
+            throw new InvalidOperationException(
+                "The selected solution publisher context is incomplete."
+            );
+        }
 
         var orgQuery = new QueryExpression("organization")
         {
@@ -96,7 +116,15 @@ public sealed class DataverseSchemaService
         }
 
         var org = orgResponse.Entities[0];
-        var baseLanguage = org.GetAttributeValue<int>("languagecode")
+        var languageCode = org.GetAttributeValue<int>("languagecode");
+        if( languageCode <= 0 )
+        {
+            throw new InvalidOperationException(
+                "The organization base language is unavailable."
+            );
+        }
+
+        var baseLanguage = languageCode
             .ToString(CultureInfo.InvariantCulture);
 
         return new SolutionWriteContext
@@ -104,10 +132,27 @@ public sealed class DataverseSchemaService
             SolutionId = solution.Id,
             SolutionUniqueName = solution.UniqueName,
             IsManaged = solution.IsManaged ?? false,
+            CanWrite = true,
             PublisherId = publisherId,
             PublisherPrefix = prefix,
             BaseLanguage = baseLanguage,
-            EnvironmentUrl = solution.UniqueName
+            EnvironmentUrl = _environmentUrl
+        };
+    }
+
+    private SolutionWriteContext CreateReadOnlyContext(
+        DataverseSolution solution,
+        string reason
+    )
+    {
+        return new SolutionWriteContext
+        {
+            SolutionId = solution.Id,
+            SolutionUniqueName = solution.UniqueName,
+            IsManaged = solution.IsManaged == true,
+            CanWrite = false,
+            WriteDisabledReason = reason,
+            EnvironmentUrl = _environmentUrl
         };
     }
 
@@ -115,9 +160,42 @@ public sealed class DataverseSchemaService
         string tableLogicalName,
         string columnLogicalName,
         bool retrieveAsIfPublished,
+        CancellationToken cancellationToken,
+        string? baseLanguage = null
+    )
+    {
+        var metadata = await LoadAttributeMetadataAsync(
+            tableLogicalName,
+            columnLogicalName,
+            retrieveAsIfPublished,
+            cancellationToken
+        );
+        return CreateColumn(metadata, ParseBaseLanguage(baseLanguage));
+    }
+
+    private async Task<AttributeMetadata> LoadAttributeMetadataAsync(
+        string tableLogicalName,
+        string columnLogicalName,
+        bool retrieveAsIfPublished,
         CancellationToken cancellationToken
     )
     {
+        if( string.IsNullOrWhiteSpace(tableLogicalName) )
+        {
+            throw new ArgumentException(
+                "A table logical name is required.",
+                nameof(tableLogicalName)
+            );
+        }
+
+        if( string.IsNullOrWhiteSpace(columnLogicalName) )
+        {
+            throw new ArgumentException(
+                "A column logical name is required.",
+                nameof(columnLogicalName)
+            );
+        }
+
         var request = new RetrieveAttributeRequest
         {
             EntityLogicalName = tableLogicalName,
@@ -129,7 +207,57 @@ public sealed class DataverseSchemaService
             request,
             cancellationToken
         );
-        return CreateColumn(response.AttributeMetadata);
+        return response.AttributeMetadata;
+    }
+
+    private async Task<EntityMetadata> LoadEntityMetadataAsync(
+        string tableLogicalName,
+        Guid tableMetadataId,
+        bool retrieveAsIfPublished,
+        CancellationToken cancellationToken
+    )
+    {
+        if( string.IsNullOrWhiteSpace(tableLogicalName) )
+        {
+            throw new ArgumentException(
+                "A table logical name is required.",
+                nameof(tableLogicalName)
+            );
+        }
+
+        if( tableMetadataId == Guid.Empty )
+        {
+            throw new ArgumentException(
+                "A table metadata ID is required.",
+                nameof(tableMetadataId)
+            );
+        }
+
+        var request = new RetrieveEntityRequest
+        {
+            EntityFilters = EntityFilters.Entity,
+            LogicalName = tableLogicalName,
+            MetadataId = tableMetadataId,
+            RetrieveAsIfPublished = retrieveAsIfPublished
+        };
+        var response = (RetrieveEntityResponse)await _client.ExecuteAsync(
+            request,
+            cancellationToken
+        );
+        var metadata = response.EntityMetadata;
+        if( metadata.MetadataId != tableMetadataId
+            || !string.Equals(
+                metadata.LogicalName,
+                tableLogicalName,
+                StringComparison.OrdinalIgnoreCase
+            ) )
+        {
+            throw new ColumnConflictException(
+                "The selected table identity changed; reload before writing."
+            );
+        }
+
+        return metadata;
     }
 
     public async Task<Guid> CreateTableAsync(
@@ -137,13 +265,11 @@ public sealed class DataverseSchemaService
         CancellationToken cancellationToken
     )
     {
+        RequireWriteContext(request.Context);
         var context = request.Context;
-        if( context.IsManaged )
-        {
-            throw new InvalidOperationException(
-                ColumnCapabilityPolicy.ReasonManagedSolution
-            );
-        }
+        EnsureWriteAllowed(context);
+        await VerifySolutionWriteScopeAsync(context, cancellationToken);
+        RequirePublisherContext(context);
 
         ValidateTableCreation(request);
         var language = int.Parse(context.BaseLanguage, CultureInfo.InvariantCulture);
@@ -155,6 +281,7 @@ public sealed class DataverseSchemaService
             context.PublisherPrefix,
             request.PrimaryNameSchemaSuffix
         );
+        await EnsureTableNameAvailableAsync(logicalName, cancellationToken);
 
         var entityMetadata = new EntityMetadata
         {
@@ -171,14 +298,8 @@ public sealed class DataverseSchemaService
             OwnershipType = request.IsUserOwned
                 ? OwnershipTypes.UserOwned
                 : OwnershipTypes.OrganizationOwned,
-            IsActivity = false,
-            IsMappable = new BooleanManagedProperty(false),
-            IsReadingPaneEnabled = false
+            IsActivity = false
         };
-        SetMetadataFlag(entityMetadata, "IsCustomEntity", true);
-        SetMetadataFlag(entityMetadata, "IsIntersect", false);
-        SetMetadataFlag(entityMetadata, "PrimaryIdAttribute", "id");
-        SetMetadataFlag(entityMetadata, "PrimaryNameAttribute", primaryName);
 
         var primaryColumn = new StringAttributeMetadata
         {
@@ -186,6 +307,11 @@ public sealed class DataverseSchemaService
             DisplayName = CreateLabel(
                 request.PrimaryNameDisplayName,
                 language
+            ),
+            Format = StringFormat.Text,
+            FormatName = StringFormatName.Text,
+            RequiredLevel = new AttributeRequiredLevelManagedProperty(
+                AttributeRequiredLevel.None
             ),
             MaxLength = request.PrimaryNameMaxLength
         };
@@ -201,6 +327,36 @@ public sealed class DataverseSchemaService
             sdkRequest,
             cancellationToken
         );
+        if( response.EntityId == Guid.Empty )
+        {
+            throw new InvalidOperationException(
+                "Table creation completed without a table identity."
+            );
+        }
+
+        try
+        {
+            await VerifyCreatedTableAsync(
+                logicalName,
+                response.EntityId,
+                cancellationToken
+            );
+        }
+        catch( OperationCanceledException )
+            when( cancellationToken.IsCancellationRequested )
+        {
+            throw;
+        }
+        catch( Exception ex )
+        {
+            throw new SchemaWriteOutcomeUnknownException(
+                "Table creation returned ID " + response.EntityId
+                    + ", but readback failed: " + ex.Message,
+                response.EntityId,
+                ex
+            );
+        }
+
         return response.EntityId;
     }
 
@@ -209,18 +365,48 @@ public sealed class DataverseSchemaService
         CancellationToken cancellationToken
     )
     {
+        RequireWriteContext(request.Context);
         var context = request.Context;
-        if( context.IsManaged )
-        {
-            throw new InvalidOperationException(
-                ColumnCapabilityPolicy.ReasonManagedSolution
-            );
-        }
+        EnsureWriteAllowed(context);
+        await VerifySolutionWriteScopeAsync(context, cancellationToken);
+        RequirePublisherContext(context);
 
         ValidateColumnCreation(request);
+        RequireTableIdentity(request.TableMetadataId);
+        if( request.TableMetadataId != Guid.Empty )
+        {
+            await VerifyTableSolutionScopeAsync(
+                context,
+                request.TableMetadataId,
+                cancellationToken
+            );
+            var table = await LoadEntityMetadataAsync(
+                request.TableLogicalName,
+                request.TableMetadataId,
+                retrieveAsIfPublished: true,
+                cancellationToken
+            );
+            var capability = ColumnCapabilityPolicy.EvaluateTable(
+                table.IsCustomizable?.Value,
+                table.CanCreateAttributes?.Value
+            );
+            if( !capability.CanCreateColumn )
+            {
+                throw new InvalidOperationException(
+                    capability.CreateColumnReason
+                    ?? ColumnCapabilityPolicy.ReasonUnknownTable
+                );
+            }
+        }
+
         var schemaName = BuildSchemaName(
             context.PublisherPrefix,
             request.SchemaSuffix
+        );
+        await EnsureColumnNameAvailableAsync(
+            request.TableLogicalName,
+            schemaName,
+            cancellationToken
         );
         var attribute = CreateAttributeMetadata(
             request.Kind,
@@ -232,7 +418,10 @@ public sealed class DataverseSchemaService
             request.MinValue,
             request.MaxValue,
             request.Precision,
-            request.RequirementLevel
+            request.RequirementLevel,
+            request.BooleanDefaultValue,
+            request.BooleanTrueLabel,
+            request.BooleanFalseLabel
         );
 
         var sdkRequest = new CreateAttributeRequest
@@ -246,6 +435,38 @@ public sealed class DataverseSchemaService
             sdkRequest,
             cancellationToken
         );
+        if( response.AttributeId == Guid.Empty )
+        {
+            throw new InvalidOperationException(
+                "Column creation completed without a column identity."
+            );
+        }
+
+        try
+        {
+            await VerifyCreatedColumnAsync(
+                request.TableLogicalName,
+                schemaName,
+                request.TableMetadataId,
+                response.AttributeId,
+                cancellationToken
+            );
+        }
+        catch( OperationCanceledException )
+            when( cancellationToken.IsCancellationRequested )
+        {
+            throw;
+        }
+        catch( Exception ex )
+        {
+            throw new SchemaWriteOutcomeUnknownException(
+                "Column creation returned ID " + response.AttributeId
+                    + ", but readback failed: " + ex.Message,
+                response.AttributeId,
+                ex
+            );
+        }
+
         return response.AttributeId;
     }
 
@@ -254,20 +475,45 @@ public sealed class DataverseSchemaService
         CancellationToken cancellationToken
     )
     {
+        RequireWriteContext(request.Context);
         var context = request.Context;
-        if( context.IsManaged )
+        EnsureWriteAllowed(context);
+        await VerifySolutionWriteScopeAsync(context, cancellationToken);
+        RequirePublisherContext(context);
+        RequireTableIdentity(request.TableMetadataId);
+
+        if( request.TableMetadataId != Guid.Empty )
         {
-            throw new InvalidOperationException(
-                ColumnCapabilityPolicy.ReasonManagedSolution
+            await VerifyTableSolutionScopeAsync(
+                context,
+                request.TableMetadataId,
+                cancellationToken
+            );
+            await LoadEntityMetadataAsync(
+                request.TableLogicalName,
+                request.TableMetadataId,
+                retrieveAsIfPublished: false,
+                cancellationToken
             );
         }
 
-        var fresh = await LoadColumnDefinitionAsync(
+        var freshMetadata = await LoadAttributeMetadataAsync(
             request.TableLogicalName,
             request.ColumnLogicalName,
             retrieveAsIfPublished: false,
             cancellationToken
         );
+        var fresh = CreateColumn(
+            freshMetadata,
+            ParseBaseLanguage(context.BaseLanguage)
+        );
+        if( request.ExpectedMetadataId == Guid.Empty )
+        {
+            throw new ColumnConflictException(
+                "The column identity is missing; reload before saving."
+            );
+        }
+
         if( fresh.MetadataId != request.ExpectedMetadataId )
         {
             throw new ColumnConflictException(
@@ -284,13 +530,20 @@ public sealed class DataverseSchemaService
             );
         }
 
+        ValidateColumnUpdate(request, fresh);
+
         var changed = false;
         var displayName = fresh.DisplayName;
         var description = fresh.Description;
         var newMaxLength = fresh.MaxLength;
         var requirement = fresh.RequirementLevel;
 
-        if( request.SetDisplayName )
+        if( request.SetDisplayName
+            && !string.Equals(
+                request.DisplayName,
+                fresh.DisplayName,
+                StringComparison.Ordinal
+            ) )
         {
             if( !capability.CanEditDisplayName )
             {
@@ -306,19 +559,32 @@ public sealed class DataverseSchemaService
 
         if( request.SetDescription )
         {
-            if( !capability.CanEditDescription )
+            var requestedDescription = string.IsNullOrWhiteSpace(
+                request.Description
+            )
+                ? string.Empty
+                : request.Description;
+            if( !string.Equals(
+                requestedDescription,
+                fresh.Description,
+                StringComparison.Ordinal
+            ) )
             {
-                throw new InvalidOperationException(
-                    capability.EditDescriptionReason
-                    ?? ColumnCapabilityPolicy.ReasonNotCustomizableSettings
-                );
-            }
+                if( !capability.CanEditDescription )
+                {
+                    throw new InvalidOperationException(
+                        capability.EditDescriptionReason
+                        ?? ColumnCapabilityPolicy.ReasonNotCustomizableSettings
+                    );
+                }
 
-            description = request.Description;
-            changed = true;
+                description = requestedDescription;
+                changed = true;
+            }
         }
 
-        if( request.NewMaxLength.HasValue )
+        if( request.NewMaxLength.HasValue
+            && request.NewMaxLength.Value != fresh.MaxLength )
         {
             if( !capability.CanIncreaseLength )
             {
@@ -339,7 +605,12 @@ public sealed class DataverseSchemaService
             changed = true;
         }
 
-        if( request.SetRequirementLevel )
+        if( request.SetRequirementLevel
+            && !string.Equals(
+                request.RequirementLevel,
+                fresh.RequirementLevel,
+                StringComparison.Ordinal
+            ) )
         {
             if( !capability.CanEditRequirement )
             {
@@ -363,11 +634,14 @@ public sealed class DataverseSchemaService
         }
 
         var metadata = CreateUpdateMetadata(
-            fresh,
+            freshMetadata,
             displayName,
             description,
             newMaxLength,
             requirement,
+            request.SetDisplayName,
+            request.SetDescription,
+            request.SetRequirementLevel,
             context.BaseLanguage
         );
 
@@ -380,6 +654,33 @@ public sealed class DataverseSchemaService
         };
 
         await _client.ExecuteAsync(sdkRequest, cancellationToken);
+        try
+        {
+            await VerifyUpdatedColumnAsync(
+                request,
+                displayName,
+                description,
+                newMaxLength,
+                requirement,
+                context.BaseLanguage,
+                cancellationToken
+            );
+        }
+        catch( OperationCanceledException )
+            when( cancellationToken.IsCancellationRequested )
+        {
+            throw;
+        }
+        catch( Exception ex )
+        {
+            throw new SchemaWriteOutcomeUnknownException(
+                "Column update for ID " + fresh.MetadataId
+                    + " was sent, but readback failed: " + ex.Message,
+                fresh.MetadataId,
+                ex
+            );
+        }
+
         return new ColumnUpdateResult
         {
             MetadataId = fresh.MetadataId,
@@ -393,6 +694,14 @@ public sealed class DataverseSchemaService
         CancellationToken cancellationToken
     )
     {
+        if( columnMetadataId == Guid.Empty )
+        {
+            throw new ArgumentException(
+                "A column metadata ID is required.",
+                nameof(columnMetadataId)
+            );
+        }
+
         var request = new RetrieveDependenciesForDeleteRequest
         {
             ComponentType = ComponentTypeAttribute,
@@ -401,21 +710,30 @@ public sealed class DataverseSchemaService
 
         var response = (RetrieveDependenciesForDeleteResponse)
             await _client.ExecuteAsync(request, cancellationToken);
-        var dependencies = new List<DependencyInfo>();
         if( response.EntityCollection == null )
         {
-            return dependencies;
+            throw new InvalidOperationException(
+                "The dependency check returned no dependency collection."
+            );
         }
 
+        var dependencies = new List<DependencyInfo>();
         foreach( var entity in response.EntityCollection.Entities )
         {
             dependencies.Add(new DependencyInfo
             {
-                ComponentType = GetOptionValue(entity, "componenttype"),
-                ObjectId = entity.Contains("objectid")
-                    ? entity.GetAttributeValue<Guid>("objectid")
-                    : null,
-                Name = entity.GetAttributeValue<string>("name")
+                ComponentType = GetOptionValue(
+                    entity,
+                    "dependentcomponenttype"
+                ) ?? GetOptionValue(entity, "componenttype"),
+                ObjectId = GetGuidValue(
+                    entity,
+                    "dependentcomponentobjectid"
+                ) ?? GetGuidValue(entity, "objectid"),
+                Name = entity.GetAttributeValue<string>(
+                        "dependentcomponentname"
+                    )
+                    ?? entity.GetAttributeValue<string>("name")
                     ?? entity.GetAttributeValue<string>("friendlyname")
                     ?? string.Empty
             });
@@ -428,15 +746,50 @@ public sealed class DataverseSchemaService
         string tableLogicalName,
         string columnLogicalName,
         Guid expectedMetadataId,
-        CancellationToken cancellationToken
+        CancellationToken cancellationToken,
+        Guid tableMetadataId = default,
+        SolutionWriteContext? context = null
     )
     {
+        RequireWriteContext(context);
+        if( context != null )
+        {
+            EnsureWriteAllowed(context);
+            await VerifySolutionWriteScopeAsync(context, cancellationToken);
+        }
+        RequireTableIdentity(tableMetadataId);
+
+        if( tableMetadataId != Guid.Empty )
+        {
+            if( context != null )
+            {
+                await VerifyTableSolutionScopeAsync(
+                    context,
+                    tableMetadataId,
+                    cancellationToken
+                );
+            }
+            await LoadEntityMetadataAsync(
+                tableLogicalName,
+                tableMetadataId,
+                retrieveAsIfPublished: false,
+                cancellationToken
+            );
+        }
+
         var fresh = await LoadColumnDefinitionAsync(
             tableLogicalName,
             columnLogicalName,
             retrieveAsIfPublished: false,
             cancellationToken
         );
+        if( expectedMetadataId == Guid.Empty )
+        {
+            throw new ColumnConflictException(
+                "The column identity is missing; reload before deleting."
+            );
+        }
+
         if( fresh.MetadataId != expectedMetadataId )
         {
             throw new ColumnConflictException(
@@ -454,6 +807,17 @@ public sealed class DataverseSchemaService
             );
         }
 
+        var dependencies = await GetColumnDeleteDependenciesAsync(
+            fresh.MetadataId,
+            cancellationToken
+        );
+        if( dependencies.Count > 0 )
+        {
+            throw new InvalidOperationException(
+                "Column has dependencies and cannot be deleted."
+            );
+        }
+
         var request = new DeleteAttributeRequest
         {
             EntityLogicalName = tableLogicalName,
@@ -461,13 +825,108 @@ public sealed class DataverseSchemaService
         };
 
         await _client.ExecuteAsync(request, cancellationToken);
+        try
+        {
+            await VerifyColumnDeletedAsync(
+                tableLogicalName,
+                columnLogicalName,
+                cancellationToken
+            );
+        }
+        catch( OperationCanceledException )
+            when( cancellationToken.IsCancellationRequested )
+        {
+            throw;
+        }
+        catch( Exception ex )
+        {
+            throw new SchemaWriteOutcomeUnknownException(
+                "Column deletion for ID " + fresh.MetadataId
+                    + " was sent, but absence could not be verified: "
+                    + ex.Message,
+                fresh.MetadataId,
+                ex
+            );
+        }
+    }
+
+    private async Task VerifyColumnDeletedAsync(
+        string tableLogicalName,
+        string columnLogicalName,
+        CancellationToken cancellationToken
+    )
+    {
+        try
+        {
+            await LoadAttributeMetadataAsync(
+                tableLogicalName,
+                columnLogicalName,
+                retrieveAsIfPublished: false,
+                cancellationToken
+            );
+        }
+        catch( Exception ex ) when( IsMetadataNotFound(ex) )
+        {
+            return;
+        }
+        catch( Exception ex )
+        {
+            throw new InvalidOperationException(
+                "Column deletion was sent, but its result could not be verified: "
+                + ex.Message,
+                ex
+            );
+        }
+
+        throw new InvalidOperationException(
+            "Column deletion was sent, but the column is still present."
+        );
+    }
+
+    private static bool IsMetadataNotFound(Exception exception)
+    {
+        for( var current = exception; current != null; current = current.InnerException )
+        {
+            var message = current.Message;
+            if( message.Contains("could not find", StringComparison.OrdinalIgnoreCase)
+                || message.Contains("not found", StringComparison.OrdinalIgnoreCase)
+                || message.Contains("does not exist", StringComparison.OrdinalIgnoreCase)
+                || message.Contains("doesn't exist", StringComparison.OrdinalIgnoreCase)
+                || message.Contains("cannot be found", StringComparison.OrdinalIgnoreCase) )
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     public async Task PublishTableAsync(
         string tableLogicalName,
-        CancellationToken cancellationToken
+        CancellationToken cancellationToken,
+        SolutionWriteContext? context = null,
+        Guid tableMetadataId = default
     )
     {
+        RequireWriteContext(context);
+        if( context != null )
+        {
+            EnsureWriteAllowed(context);
+            await VerifySolutionWriteScopeAsync(context, cancellationToken);
+            RequireTableIdentity(tableMetadataId);
+            await VerifyTableSolutionScopeAsync(
+                context,
+                tableMetadataId,
+                cancellationToken
+            );
+            await LoadEntityMetadataAsync(
+                tableLogicalName,
+                tableMetadataId,
+                retrieveAsIfPublished: false,
+                cancellationToken
+            );
+        }
+
         var xml = BuildPublishXml(tableLogicalName);
         var request = new PublishXmlRequest
         {
@@ -489,6 +948,430 @@ public sealed class DataverseSchemaService
         };
 
         await _client.ExecuteAsync(request, cancellationToken);
+    }
+
+    private static void EnsureWriteAllowed(SolutionWriteContext context)
+    {
+        if( context == null )
+        {
+            throw new InvalidOperationException(
+                "A solution write context is required."
+            );
+        }
+
+        if( context.CanWrite && !context.IsManaged )
+        {
+            return;
+        }
+
+        var reason = context.WriteDisabledReason;
+        if( string.IsNullOrWhiteSpace(reason) )
+        {
+            reason = context.IsManaged
+                ? ColumnCapabilityPolicy.ReasonManagedSolution
+                : "Writes are disabled because the solution context is unavailable.";
+        }
+
+        throw new InvalidOperationException(reason);
+    }
+
+    private void RequireWriteContext(SolutionWriteContext? context)
+    {
+        if( string.IsNullOrWhiteSpace(_environmentUrl) || context != null )
+        {
+            return;
+        }
+
+        throw new InvalidOperationException(
+            "A solution write context is required."
+        );
+    }
+
+    private static void RequirePublisherContext(SolutionWriteContext context)
+    {
+        if( string.IsNullOrWhiteSpace(context.SolutionUniqueName) )
+        {
+            throw new InvalidOperationException(
+                "The selected solution unique name is unavailable."
+            );
+        }
+
+        if( string.IsNullOrWhiteSpace(context.PublisherPrefix) )
+        {
+            throw new InvalidOperationException(
+                "The selected solution publisher prefix is unavailable."
+            );
+        }
+
+        if( string.IsNullOrWhiteSpace(context.BaseLanguage)
+            || !int.TryParse(
+                context.BaseLanguage,
+                NumberStyles.Integer,
+                CultureInfo.InvariantCulture,
+                out _
+            ) )
+        {
+            throw new InvalidOperationException(
+                "The environment base language is unavailable."
+            );
+        }
+    }
+
+    private void RequireTableIdentity(Guid tableMetadataId)
+    {
+        if( string.IsNullOrWhiteSpace(_environmentUrl)
+            || tableMetadataId != Guid.Empty )
+        {
+            return;
+        }
+
+        throw new ArgumentException(
+            "A table metadata ID is required for a schema write.",
+            nameof(tableMetadataId)
+        );
+    }
+
+    private async Task VerifySolutionWriteScopeAsync(
+        SolutionWriteContext context,
+        CancellationToken cancellationToken
+    )
+    {
+        if( string.IsNullOrWhiteSpace(_environmentUrl) )
+        {
+            return;
+        }
+
+        if( context.SolutionId == Guid.Empty
+            || string.IsNullOrWhiteSpace(context.SolutionUniqueName) )
+        {
+            throw new InvalidOperationException(
+                "The selected solution identity is incomplete."
+            );
+        }
+
+        var query = new QueryExpression("solution")
+        {
+            ColumnSet = new ColumnSet(
+                "solutionid",
+                "uniquename",
+                "ismanaged",
+                "publisherid"
+            )
+        };
+        query.Criteria.AddCondition(
+            "solutionid",
+            ConditionOperator.Equal,
+            context.SolutionId
+        );
+        var response = await _client.RetrieveMultipleAsync(
+            query,
+            cancellationToken
+        );
+        if( response.Entities.Count == 0 )
+        {
+            throw new InvalidOperationException(
+                "The selected solution no longer exists."
+            );
+        }
+
+        var solution = response.Entities[0];
+        if( !solution.Contains("ismanaged") )
+        {
+            throw new InvalidOperationException(
+                "The selected solution management state is unknown."
+            );
+        }
+
+        var isManaged = solution.GetAttributeValue<bool>("ismanaged");
+        var solutionId = solution.GetAttributeValue<Guid>("solutionid");
+        var uniqueName = solution.GetAttributeValue<string>("uniquename");
+        var publisherId = GetGuidValue(solution, "publisherid");
+        if( solutionId != context.SolutionId )
+        {
+            throw new InvalidOperationException(
+                "The selected solution identity changed; reload it before writing."
+            );
+        }
+        if( isManaged )
+        {
+            throw new InvalidOperationException(
+                ColumnCapabilityPolicy.ReasonManagedSolution
+            );
+        }
+
+        if( !string.Equals(
+            uniqueName,
+            context.SolutionUniqueName,
+            StringComparison.Ordinal
+        ) )
+        {
+            throw new InvalidOperationException(
+                "The selected solution identity changed; reload it before writing."
+            );
+        }
+
+        if( publisherId != context.PublisherId )
+        {
+            throw new InvalidOperationException(
+                "The selected solution publisher changed; reload it before writing."
+            );
+        }
+    }
+
+    private async Task VerifyTableSolutionScopeAsync(
+        SolutionWriteContext context,
+        Guid tableMetadataId,
+        CancellationToken cancellationToken
+    )
+    {
+        if( string.IsNullOrWhiteSpace(_environmentUrl) )
+        {
+            return;
+        }
+
+        if( tableMetadataId == Guid.Empty )
+        {
+            throw new ArgumentException(
+                "A table metadata ID is required.",
+                nameof(tableMetadataId)
+            );
+        }
+
+        var query = new QueryExpression("solutioncomponent")
+        {
+            ColumnSet = new ColumnSet(
+                "solutioncomponentid",
+                "solutionid",
+                "componenttype",
+                "objectid"
+            )
+        };
+        query.Criteria.AddCondition(
+            "solutionid",
+            ConditionOperator.Equal,
+            context.SolutionId
+        );
+        query.Criteria.AddCondition(
+            "componenttype",
+            ConditionOperator.Equal,
+            SolutionComponentTypes.Entity
+        );
+        query.Criteria.AddCondition(
+            "objectid",
+            ConditionOperator.Equal,
+            tableMetadataId
+        );
+        var response = await _client.RetrieveMultipleAsync(
+            query,
+            cancellationToken
+        );
+        if( response.Entities.Count == 0 )
+        {
+            throw new InvalidOperationException(
+                "The selected table is no longer part of the selected solution."
+            );
+        }
+    }
+
+    private async Task VerifyCreatedTableAsync(
+        string logicalName,
+        Guid metadataId,
+        CancellationToken cancellationToken
+    )
+    {
+        if( string.IsNullOrWhiteSpace(_environmentUrl) )
+        {
+            return;
+        }
+
+        await LoadEntityMetadataAsync(
+            logicalName,
+            metadataId,
+            retrieveAsIfPublished: true,
+            cancellationToken
+        );
+    }
+
+    private async Task EnsureTableNameAvailableAsync(
+        string logicalName,
+        CancellationToken cancellationToken
+    )
+    {
+        if( string.IsNullOrWhiteSpace(_environmentUrl) )
+        {
+            return;
+        }
+
+        var request = new RetrieveEntityRequest
+        {
+            EntityFilters = EntityFilters.Entity,
+            LogicalName = logicalName,
+            RetrieveAsIfPublished = true
+        };
+        try
+        {
+            await _client.ExecuteAsync(request, cancellationToken);
+        }
+        catch( Exception ex ) when( IsMetadataNotFound(ex) )
+        {
+            return;
+        }
+
+        throw new InvalidOperationException(
+            "A table with the predicted logical name already exists."
+        );
+    }
+
+    private async Task EnsureColumnNameAvailableAsync(
+        string tableLogicalName,
+        string columnLogicalName,
+        CancellationToken cancellationToken
+    )
+    {
+        if( string.IsNullOrWhiteSpace(_environmentUrl) )
+        {
+            return;
+        }
+
+        var request = new RetrieveAttributeRequest
+        {
+            EntityLogicalName = tableLogicalName,
+            LogicalName = columnLogicalName,
+            RetrieveAsIfPublished = true
+        };
+        try
+        {
+            await _client.ExecuteAsync(request, cancellationToken);
+        }
+        catch( Exception ex ) when( IsMetadataNotFound(ex) )
+        {
+            return;
+        }
+
+        throw new InvalidOperationException(
+            "A column with the predicted logical name already exists."
+        );
+    }
+
+    private async Task VerifyCreatedColumnAsync(
+        string tableLogicalName,
+        string columnLogicalName,
+        Guid tableMetadataId,
+        Guid columnMetadataId,
+        CancellationToken cancellationToken
+    )
+    {
+        if( string.IsNullOrWhiteSpace(_environmentUrl) )
+        {
+            return;
+        }
+
+        if( tableMetadataId != Guid.Empty )
+        {
+            await LoadEntityMetadataAsync(
+                tableLogicalName,
+                tableMetadataId,
+                retrieveAsIfPublished: true,
+                cancellationToken
+            );
+        }
+
+        var metadata = await LoadAttributeMetadataByIdAsync(
+            tableLogicalName,
+            columnMetadataId,
+            retrieveAsIfPublished: true,
+            cancellationToken
+        );
+        if( metadata.MetadataId != columnMetadataId
+            || !string.Equals(
+                metadata.LogicalName,
+                columnLogicalName,
+                StringComparison.OrdinalIgnoreCase
+            ) )
+        {
+            throw new ColumnConflictException(
+                "Column creation returned a different column identity."
+            );
+        }
+    }
+
+    private async Task<AttributeMetadata> LoadAttributeMetadataByIdAsync(
+        string tableLogicalName,
+        Guid columnMetadataId,
+        bool retrieveAsIfPublished,
+        CancellationToken cancellationToken
+    )
+    {
+        if( columnMetadataId == Guid.Empty )
+        {
+            throw new ArgumentException(
+                "A column metadata ID is required.",
+                nameof(columnMetadataId)
+            );
+        }
+
+        var request = new RetrieveAttributeRequest
+        {
+            EntityLogicalName = tableLogicalName,
+            MetadataId = columnMetadataId,
+            RetrieveAsIfPublished = retrieveAsIfPublished
+        };
+        var response = (RetrieveAttributeResponse)await _client.ExecuteAsync(
+            request,
+            cancellationToken
+        );
+        return response.AttributeMetadata;
+    }
+
+    private async Task VerifyUpdatedColumnAsync(
+        UpdateColumnRequest request,
+        string displayName,
+        string description,
+        int? maxLength,
+        string? requirement,
+        string baseLanguage,
+        CancellationToken cancellationToken
+    )
+    {
+        if( string.IsNullOrWhiteSpace(_environmentUrl) )
+        {
+            return;
+        }
+
+        var metadata = await LoadAttributeMetadataAsync(
+            request.TableLogicalName,
+            request.ColumnLogicalName,
+            retrieveAsIfPublished: false,
+            cancellationToken
+        );
+        var actual = CreateColumn(metadata);
+        var language = int.Parse(baseLanguage, CultureInfo.InvariantCulture);
+        if( actual.MetadataId != request.ExpectedMetadataId
+            || (request.SetDisplayName
+                && !string.Equals(
+                    GetLabelForLanguage(metadata.DisplayName, language),
+                    displayName,
+                    StringComparison.Ordinal
+                ))
+            || (request.SetDescription
+                && !string.Equals(
+                    GetLabelForLanguage(metadata.Description, language),
+                    description,
+                    StringComparison.Ordinal
+                ))
+            || (request.NewMaxLength.HasValue
+                && actual.MaxLength != maxLength)
+            || (request.SetRequirementLevel
+                && !string.Equals(
+                    actual.RequirementLevel,
+                    requirement,
+                    StringComparison.Ordinal
+                )) )
+        {
+            throw new ColumnConflictException(
+                "Column was saved, but the requested values could not be verified."
+            );
+        }
     }
 
     private static string BuildSchemaName(string prefix, string suffix)
@@ -522,9 +1405,17 @@ public sealed class DataverseSchemaService
 
     private static void ValidateColumnCreation(CreateColumnRequest request)
     {
+        if( string.IsNullOrWhiteSpace(request.Context.PublisherPrefix) )
+        {
+            throw new InvalidOperationException(
+                "The solution publisher prefix is required."
+            );
+        }
+
         RequireText(request.DisplayName, "Display name");
         RequireText(request.SchemaSuffix, "Schema suffix");
         ValidateSchemaSuffix(request.SchemaSuffix);
+        ValidateRequirementLevel(request.RequirementLevel);
         if( request.Description != null
             && request.Description.Length > MaxDescriptionLength )
         {
@@ -558,22 +1449,91 @@ public sealed class DataverseSchemaService
                     IntMin,
                     IntMax
                 );
+                ValidateWholeNumber(request.MinValue, "Minimum value");
+                ValidateWholeNumber(request.MaxValue, "Maximum value");
                 break;
             case ColumnKind.Decimal:
                 ValidateNumericBounds(
                     request.MinValue,
                     request.MaxValue,
-                    (long)DecMin,
-                    (long)DecMax
+                    DecMin,
+                    DecMax
                 );
                 ValidatePrecision(request.Precision);
                 break;
             case ColumnKind.YesNo:
+                RequireText(request.BooleanTrueLabel, "Yes label");
+                RequireText(request.BooleanFalseLabel, "No label");
                 break;
             default:
                 throw new InvalidOperationException(
                     "Unsupported column type."
                 );
+        }
+    }
+
+    private static void ValidateColumnUpdate(
+        UpdateColumnRequest request,
+        DataverseColumn current
+    )
+    {
+        if( request.SetDisplayName )
+        {
+            RequireText(request.DisplayName, "Display name");
+        }
+
+        if( request.SetDescription
+            && request.Description.Length > MaxDescriptionLength )
+        {
+            throw new InvalidOperationException(
+                "Description is too long."
+            );
+        }
+
+        if( request.SetRequirementLevel )
+        {
+            ValidateRequirementLevel(request.RequirementLevel);
+        }
+
+        if( request.NewMaxLength.HasValue )
+        {
+            if( current.Kind == ColumnKind.Text )
+            {
+                ValidateTextLength(
+                    request.NewMaxLength,
+                    MinTextLength,
+                    MaxTextLength,
+                    "Text length"
+                );
+            }
+            else if( current.Kind == ColumnKind.MultilineText )
+            {
+                ValidateTextLength(
+                    request.NewMaxLength,
+                    MinMemoLength,
+                    MaxMemoLength,
+                    "Multiline length"
+                );
+            }
+            else
+            {
+                throw new InvalidOperationException(
+                    "Maximum length can only be changed on text columns."
+                );
+            }
+        }
+    }
+
+    private static void ValidateWholeNumber(
+        decimal? value,
+        string field
+    )
+    {
+        if( value.HasValue && value.Value != decimal.Truncate(value.Value) )
+        {
+            throw new InvalidOperationException(
+                "Whole number value is invalid: " + field
+            );
         }
     }
 
@@ -647,10 +1607,10 @@ public sealed class DataverseSchemaService
     }
 
     private static void ValidateNumericBounds(
-        long? min,
-        long? max,
-        long lowerBound,
-        long upperBound
+        decimal? min,
+        decimal? max,
+        decimal lowerBound,
+        decimal upperBound
     )
     {
         if( min.HasValue && min.Value < lowerBound )
@@ -688,6 +1648,20 @@ public sealed class DataverseSchemaService
         }
     }
 
+    private static void ValidateRequirementLevel(string level)
+    {
+        if( level == RequirementLevels.Optional
+            || level == RequirementLevels.Recommended
+            || level == RequirementLevels.Required )
+        {
+            return;
+        }
+
+        throw new InvalidOperationException(
+            "The selected requirement level is not supported."
+        );
+    }
+
     private static AttributeMetadata CreateAttributeMetadata(
         ColumnKind kind,
         string schemaName,
@@ -695,10 +1669,13 @@ public sealed class DataverseSchemaService
         string? description,
         string baseLanguage,
         int? maxLength,
-        long? minValue,
-        long? maxValue,
+        decimal? minValue,
+        decimal? maxValue,
         int? precision,
-        string requirementLevel
+        string requirementLevel,
+        bool booleanDefaultValue,
+        string booleanTrueLabel,
+        string booleanFalseLabel
     )
     {
         var language = int.Parse(baseLanguage, CultureInfo.InvariantCulture);
@@ -716,6 +1693,8 @@ public sealed class DataverseSchemaService
                 LogicalName = schemaName,
                 DisplayName = label,
                 Description = descLabel,
+                Format = StringFormat.Text,
+                FormatName = StringFormatName.Text,
                 MaxLength = maxLength ?? ColumnDefaults.TextLength,
                 RequiredLevel = requirement
             },
@@ -725,6 +1704,9 @@ public sealed class DataverseSchemaService
                 LogicalName = schemaName,
                 DisplayName = label,
                 Description = descLabel,
+                Format = StringFormat.TextArea,
+                FormatName = MemoFormatName.TextArea,
+                ImeMode = ImeMode.Disabled,
                 MaxLength = maxLength ?? ColumnDefaults.MultilineLength,
                 RequiredLevel = requirement
             },
@@ -734,11 +1716,12 @@ public sealed class DataverseSchemaService
                 LogicalName = schemaName,
                 DisplayName = label,
                 Description = descLabel,
+                Format = IntegerFormat.None,
                 MinValue = minValue.HasValue
-                    ? (int)minValue.Value
+                    ? decimal.ToInt32(minValue.Value)
                     : ColumnDefaults.WholeNumberMin,
                 MaxValue = maxValue.HasValue
-                    ? (int)maxValue.Value
+                    ? decimal.ToInt32(maxValue.Value)
                     : ColumnDefaults.WholeNumberMax,
                 RequiredLevel = requirement
             },
@@ -763,7 +1746,12 @@ public sealed class DataverseSchemaService
                 LogicalName = schemaName,
                 DisplayName = label,
                 Description = descLabel,
-                DefaultValue = false,
+                DefaultValue = booleanDefaultValue,
+                OptionSet = CreateBooleanOptionSet(
+                    booleanTrueLabel,
+                    booleanFalseLabel,
+                    language
+                ),
                 RequiredLevel = requirement
             },
             _ => throw new ArgumentOutOfRangeException(nameof(kind), kind, null)
@@ -771,33 +1759,40 @@ public sealed class DataverseSchemaService
     }
 
     private static AttributeMetadata CreateUpdateMetadata(
-        DataverseColumn current,
+        AttributeMetadata currentMetadata,
         string displayName,
         string description,
         int? newMaxLength,
         string? requirementLevel,
+        bool setDisplayName,
+        bool setDescription,
+        bool setRequirementLevel,
         string baseLanguage
     )
     {
         var language = int.Parse(baseLanguage, CultureInfo.InvariantCulture);
-        var metadata = CreateAttributeMetadata(
-            current.Kind,
-            current.SchemaName,
-            current.DisplayName,
-            current.Description,
-            baseLanguage,
-            current.MaxLength,
-            current.MinValue,
-            current.MaxValue,
-            current.Precision,
-            current.RequirementLevel ?? RequirementLevels.Optional
-        );
+        var metadata = currentMetadata;
+        if( setDisplayName )
+        {
+            metadata.DisplayName = MergeLabel(
+                currentMetadata.DisplayName,
+                displayName,
+                language
+            );
+        }
 
-        metadata.DisplayName = CreateLabel(displayName, language);
-        metadata.Description = string.IsNullOrEmpty(description)
-            ? null
-            : CreateLabel(description, language);
-        metadata.RequiredLevel = ParseRequirementLevel(requirementLevel);
+        if( setDescription )
+        {
+            metadata.Description = MergeLabel(
+                currentMetadata.Description,
+                description,
+                language
+            );
+        }
+        if( setRequirementLevel )
+        {
+            metadata.RequiredLevel = ParseRequirementLevel(requirementLevel);
+        }
 
         if( newMaxLength.HasValue )
         {
@@ -814,6 +1809,72 @@ public sealed class DataverseSchemaService
         return metadata;
     }
 
+    private static BooleanOptionSetMetadata CreateBooleanOptionSet(
+        string trueLabel,
+        string falseLabel,
+        int language
+    )
+    {
+        return new BooleanOptionSetMetadata(
+            new OptionMetadata(
+                CreateLabel(trueLabel, language),
+                1
+            ),
+            new OptionMetadata(
+                CreateLabel(falseLabel, language),
+                0
+            )
+        );
+    }
+
+    private static Label MergeLabel(
+        Label? existing,
+        string value,
+        int language
+    )
+    {
+        var label = new Label();
+        var preservedLanguages = new HashSet<int>();
+        if( existing != null )
+        {
+            foreach( var localized in existing.LocalizedLabels )
+            {
+                if( localized.LanguageCode == language )
+                {
+                    continue;
+                }
+
+                label.LocalizedLabels.Add(new UserLocalizedLabel
+                {
+                    Label = localized.Label,
+                    LanguageCode = localized.LanguageCode
+                });
+                preservedLanguages.Add(localized.LanguageCode);
+            }
+
+            var userLocalized = existing.UserLocalizedLabel;
+            if( userLocalized != null
+                && userLocalized.LanguageCode != language
+                && preservedLanguages.Add(userLocalized.LanguageCode) )
+            {
+                label.LocalizedLabels.Add(new UserLocalizedLabel
+                {
+                    Label = userLocalized.Label,
+                    LanguageCode = userLocalized.LanguageCode
+                });
+            }
+        }
+
+        var baseLabel = new UserLocalizedLabel
+        {
+            Label = value,
+            LanguageCode = language
+        };
+        label.UserLocalizedLabel = baseLabel;
+        label.LocalizedLabels.Add(baseLabel);
+        return label;
+    }
+
     private static Label CreateLabel(string text, int language)
     {
         var localizedLabel = new UserLocalizedLabel
@@ -827,16 +1888,6 @@ public sealed class DataverseSchemaService
         };
         label.LocalizedLabels.Add(localizedLabel);
         return label;
-    }
-
-    private static void SetMetadataFlag(
-        EntityMetadata metadata,
-        string propertyName,
-        object value
-    )
-    {
-        var property = metadata.GetType().GetProperty(propertyName);
-        property?.SetValue(metadata, value);
     }
 
     private static AttributeRequiredLevelManagedProperty ParseRequirementLevel(
@@ -859,16 +1910,21 @@ public sealed class DataverseSchemaService
 
     private static string BuildPublishXml(string tableLogicalName)
     {
+        if( string.IsNullOrWhiteSpace(tableLogicalName) )
+        {
+            throw new ArgumentException(
+                "A table logical name is required.",
+                nameof(tableLogicalName)
+            );
+        }
+
         var name = System.Security.SecurityElement.Escape(tableLogicalName);
         var builder = new StringBuilder();
-        builder.Append("<ImportExportXml>");
-        builder.Append("<Entities>");
-        builder.Append($"<Entity Name=\"{name}\">");
-        builder.Append("<Fields><Field Name=\"*\" /></Fields>");
-        builder.Append("<Forms /><Views />");
-        builder.Append("</Entity>");
-        builder.Append("</Entities>");
-        builder.Append("</ImportExportXml>");
+        builder.Append("<importexportxml>");
+        builder.Append("<entities><entity>");
+        builder.Append(name);
+        builder.Append("</entity></entities>");
+        builder.Append("</importexportxml>");
         return builder.ToString();
     }
 
@@ -884,7 +1940,25 @@ public sealed class DataverseSchemaService
         return value?.Value;
     }
 
-    public static DataverseColumn CreateColumn(AttributeMetadata metadata)
+    private static Guid? GetGuidValue(Entity entity, string attribute)
+    {
+        if( !entity.Contains(attribute) )
+        {
+            return null;
+        }
+
+        return entity[attribute] switch
+        {
+            Guid value => value,
+            EntityReference reference => reference.Id,
+            _ => null
+        };
+    }
+
+    public static DataverseColumn CreateColumn(
+        AttributeMetadata metadata,
+        int? baseLanguage = null
+    )
     {
         var kind = metadata switch
         {
@@ -906,8 +1980,8 @@ public sealed class DataverseSchemaService
             maxLength = memoMeta.MaxLength;
         }
 
-        int? minValue = null;
-        int? maxValue = null;
+        decimal? minValue = null;
+        decimal? maxValue = null;
         int? precision = null;
         if( metadata is IntegerAttributeMetadata intMeta )
         {
@@ -916,22 +1990,22 @@ public sealed class DataverseSchemaService
         }
         else if( metadata is DecimalAttributeMetadata decMeta )
         {
-            minValue = decMeta.MinValue.HasValue
-                ? (int?)decimal.ToInt32(decMeta.MinValue.Value)
-                : null;
-            maxValue = decMeta.MaxValue.HasValue
-                ? (int?)decimal.ToInt32(decMeta.MaxValue.Value)
-                : null;
+            minValue = decMeta.MinValue;
+            maxValue = decMeta.MaxValue;
             precision = decMeta.Precision;
         }
+
+        var booleanMetadata = metadata as BooleanAttributeMetadata;
+        var trueOption = booleanMetadata?.OptionSet?.TrueOption;
+        var falseOption = booleanMetadata?.OptionSet?.FalseOption;
 
         return new DataverseColumn
         {
             MetadataId = metadata.MetadataId ?? Guid.Empty,
             LogicalName = metadata.LogicalName ?? string.Empty,
             SchemaName = metadata.SchemaName ?? string.Empty,
-            DisplayName = GetLabel(metadata.DisplayName),
-            Description = GetLabel(metadata.Description),
+            DisplayName = GetLabel(metadata.DisplayName, baseLanguage),
+            Description = GetLabel(metadata.Description, baseLanguage),
             Kind = kind,
             MaxLength = maxLength,
             MinValue = minValue,
@@ -945,19 +2019,87 @@ public sealed class DataverseSchemaService
             IsRenameable = metadata.IsRenameable?.Value,
             CanModifyAdditionalSettings =
                 metadata.CanModifyAdditionalSettings?.Value,
-            RequirementLevel = metadata.RequiredLevel?.Value.ToString(),
+            CanChangeRequirement = metadata.RequiredLevel?.CanBeChanged,
+            RequirementLevel = GetRequirementLevel(metadata.RequiredLevel?.Value),
             AttributeTypeCode = metadata.AttributeType?.ToString(),
+            AttributeFormat = GetAttributeFormat(metadata),
             AttributeOf = metadata.AttributeOf,
             IsLogical = metadata.IsLogical,
             SourceType = metadata.SourceType,
-            AutoNumberFormat = metadata.AutoNumberFormat
+            AutoNumberFormat = metadata.AutoNumberFormat,
+            BooleanDefaultValue = booleanMetadata?.DefaultValue,
+            BooleanTrueLabel = GetLabel(trueOption?.Label, baseLanguage),
+            BooleanFalseLabel = GetLabel(falseOption?.Label, baseLanguage)
         };
     }
 
-    private static string GetLabel(Label? label)
+    private static string GetLabel(Label? label, int? baseLanguage = null)
     {
+        if( baseLanguage.HasValue )
+        {
+            return GetLabelForLanguage(label, baseLanguage.Value);
+        }
+
         return label?.UserLocalizedLabel?.Label
             ?? label?.LocalizedLabels.FirstOrDefault()?.Label
             ?? string.Empty;
+    }
+
+    private static int? ParseBaseLanguage(string? baseLanguage)
+    {
+        if( string.IsNullOrWhiteSpace(baseLanguage) )
+        {
+            return null;
+        }
+
+        if( !int.TryParse(
+            baseLanguage,
+            NumberStyles.Integer,
+            CultureInfo.InvariantCulture,
+            out var language
+        ) || language <= 0 )
+        {
+            throw new ArgumentException(
+                "The organization base language is invalid.",
+                nameof(baseLanguage)
+            );
+        }
+
+        return language;
+    }
+
+    private static string? GetAttributeFormat(AttributeMetadata metadata)
+    {
+        return metadata switch
+        {
+            StringAttributeMetadata value => value.FormatName?.ToString()
+                ?? value.Format?.ToString(),
+            MemoAttributeMetadata value => value.FormatName?.ToString()
+                ?? value.Format?.ToString(),
+            IntegerAttributeMetadata value => value.Format?.ToString(),
+            _ => null
+        };
+    }
+
+    private static string GetLabelForLanguage(Label? label, int language)
+    {
+        return label?.LocalizedLabels
+            .FirstOrDefault(localized => localized.LanguageCode == language)
+            ?.Label
+            ?? (label?.UserLocalizedLabel?.LanguageCode == language
+                ? label.UserLocalizedLabel.Label
+                : null)
+            ?? string.Empty;
+    }
+
+    private static string? GetRequirementLevel(AttributeRequiredLevel? level)
+    {
+        return level switch
+        {
+            AttributeRequiredLevel.None => RequirementLevels.Optional,
+            AttributeRequiredLevel.Recommended => RequirementLevels.Recommended,
+            AttributeRequiredLevel.ApplicationRequired => RequirementLevels.Required,
+            _ => null
+        };
     }
 }

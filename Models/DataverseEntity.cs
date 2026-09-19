@@ -15,6 +15,7 @@ public sealed class DataverseEntity
     public int? ObjectTypeCode { get; init; }
     public bool? IsCustom { get; init; }
     public bool? IsCustomizable { get; init; }
+    public bool? CanCreateAttributes { get; init; }
     public bool? IsManaged { get; init; }
     public bool? IsActivity { get; init; }
 }

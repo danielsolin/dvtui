@@ -17,14 +17,18 @@ public sealed class CreateColumnRequest
 {
     public SolutionWriteContext Context { get; init; } = null!;
     public string TableLogicalName { get; init; } = string.Empty;
+    public Guid TableMetadataId { get; init; }
     public string DisplayName { get; init; } = string.Empty;
     public string SchemaSuffix { get; init; } = string.Empty;
     public string? Description { get; init; }
     public ColumnKind Kind { get; init; }
     public int? MaxLength { get; init; }
-    public long? MinValue { get; init; }
-    public long? MaxValue { get; init; }
+    public decimal? MinValue { get; init; }
     public int? Precision { get; init; }
+    public decimal? MaxValue { get; init; }
+    public bool BooleanDefaultValue { get; init; }
+    public string BooleanTrueLabel { get; init; } = "Yes";
+    public string BooleanFalseLabel { get; init; } = "No";
     public string RequirementLevel { get; init; } = RequirementLevels.Optional;
 }
 
@@ -32,6 +36,7 @@ public sealed class UpdateColumnRequest
 {
     public SolutionWriteContext Context { get; init; } = null!;
     public string TableLogicalName { get; init; } = string.Empty;
+    public Guid TableMetadataId { get; init; }
     public string ColumnLogicalName { get; init; } = string.Empty;
     public Guid ExpectedMetadataId { get; init; }
     public bool SetDisplayName { get; init; }

@@ -44,6 +44,11 @@ internal static class EntityDetailsView
         AddRow(table, "Object type code", entity.ObjectTypeCode?.ToString());
         AddRow(table, "Custom table", FormatBoolean(entity.IsCustom));
         AddRow(table, "Customizable", FormatBoolean(entity.IsCustomizable));
+        AddRow(
+            table,
+            "Can create columns",
+            FormatBoolean(entity.CanCreateAttributes)
+        );
         AddRow(table, "Managed", FormatBoolean(entity.IsManaged));
         AddRow(table, "Activity", FormatBoolean(entity.IsActivity));
         AddRow(table, "Description", entity.Description);

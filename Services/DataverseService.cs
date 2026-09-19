@@ -41,6 +41,7 @@ public class DataverseService : IDisposable
     ];
 
     private readonly ServiceClient _client;
+    private readonly string _environmentUrl;
 
     public DataverseService(string url)
     {
@@ -49,6 +50,7 @@ public class DataverseService : IDisposable
         {
             url = "https://" + url;
         }
+        _environmentUrl = url;
 
         var options = new ConnectionOptions
         {
@@ -72,9 +74,14 @@ public class DataverseService : IDisposable
         }
     }
 
+    public string EnvironmentUrl => _environmentUrl;
+
     public DataverseSchemaService CreateSchemaService()
     {
-        return new DataverseSchemaService(new ServiceClientExecutor(_client));
+        return new DataverseSchemaService(
+            new ServiceClientExecutor(_client),
+            _environmentUrl
+        );
     }
 
     public async Task<List<DataverseSolution>> GetSolutionsAsync(
@@ -171,6 +178,7 @@ public class DataverseService : IDisposable
             cancellationToken
         );
         var metadata = response.EntityMetadata;
+        VerifyEntityIdentity(metadata, logicalName, metadataId);
         return new DataverseEntityDetails
         {
             Entity = CreateEntity(metadata),
@@ -213,6 +221,7 @@ public class DataverseService : IDisposable
             cancellationToken
         );
         var metadata = response.EntityMetadata;
+        VerifyEntityIdentity(metadata, logicalName, metadataId);
         var columns = new List<DataverseColumn>();
         if( metadata.Attributes == null )
         {
@@ -251,6 +260,23 @@ public class DataverseService : IDisposable
         );
     }
 
+    public virtual Task<DataverseColumn> GetColumnDefinitionAsync(
+        string tableLogicalName,
+        string columnLogicalName,
+        bool retrieveAsIfPublished,
+        string baseLanguage,
+        CancellationToken cancellationToken
+    )
+    {
+        return CreateSchemaService().LoadColumnDefinitionAsync(
+            tableLogicalName,
+            columnLogicalName,
+            retrieveAsIfPublished,
+            cancellationToken,
+            baseLanguage
+        );
+    }
+
     public virtual Task<ColumnUpdateResult> UpdateColumnAsync(
         UpdateColumnRequest request,
         CancellationToken cancellationToken
@@ -277,25 +303,33 @@ public class DataverseService : IDisposable
         string tableLogicalName,
         string columnLogicalName,
         Guid expectedMetadataId,
-        CancellationToken cancellationToken
+        CancellationToken cancellationToken,
+        Guid tableMetadataId = default,
+        SolutionWriteContext? context = null
     )
     {
         return CreateSchemaService().DeleteColumnAsync(
             tableLogicalName,
             columnLogicalName,
             expectedMetadataId,
-            cancellationToken
+            cancellationToken,
+            tableMetadataId,
+            context
         );
     }
 
     public Task PublishTableAsync(
         string tableLogicalName,
-        CancellationToken cancellationToken
+        CancellationToken cancellationToken,
+        SolutionWriteContext? context = null,
+        Guid tableMetadataId = default
     )
     {
         return CreateSchemaService().PublishTableAsync(
             tableLogicalName,
-            cancellationToken
+            cancellationToken,
+            context,
+            tableMetadataId
         );
     }
 
@@ -467,7 +501,16 @@ public class DataverseService : IDisposable
                 request,
                 cancellationToken
             );
+            if( response.EntityMetadata.MetadataId != metadataId )
+            {
+                return null;
+            }
+
             return CreateEntity(response.EntityMetadata);
+        }
+        catch( OperationCanceledException ) when( cancellationToken.IsCancellationRequested )
+        {
+            throw;
         }
         catch
         {
@@ -492,9 +535,29 @@ public class DataverseService : IDisposable
             ObjectTypeCode = metadata.ObjectTypeCode,
             IsCustom = metadata.IsCustomEntity,
             IsCustomizable = metadata.IsCustomizable?.Value,
+            CanCreateAttributes = metadata.CanCreateAttributes?.Value,
             IsManaged = metadata.IsManaged,
             IsActivity = metadata.IsActivity
         };
+    }
+
+    private static void VerifyEntityIdentity(
+        EntityMetadata metadata,
+        string logicalName,
+        Guid metadataId
+    )
+    {
+        if( metadata.MetadataId != metadataId
+            || !string.Equals(
+                metadata.LogicalName,
+                logicalName,
+                StringComparison.OrdinalIgnoreCase
+            ) )
+        {
+            throw new ColumnConflictException(
+                "The retrieved table does not match the selected table."
+            );
+        }
     }
 
     private static IReadOnlyList<DataverseField> CreateFields(

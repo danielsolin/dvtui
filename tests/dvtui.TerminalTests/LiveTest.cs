@@ -6,8 +6,6 @@ namespace dvtui.TerminalTests;
 
 internal static class LiveTest
 {
-    private const string LedgerPath = "live-test-ledger.txt";
-
     public static int Run(string[] args)
     {
         var url = args.Length > 0 ? args[0] : null;
@@ -23,9 +21,13 @@ internal static class LiveTest
         var runMarker = "dvtui-" + DateTime.UtcNow.ToString(
             "yyyyMMdd-HHmmss"
         );
-        var ledger = new Ledger(LedgerPath, runMarker);
+        var ledgerPath = Path.Combine(
+            Path.GetTempPath(),
+            "dvtui-live-test-" + runMarker + ".ledger"
+        );
+        var ledger = new Ledger(ledgerPath, runMarker);
         Console.WriteLine("Run marker: " + runMarker);
-        Console.WriteLine("Ledger: " + LedgerPath);
+        Console.WriteLine("Ledger: " + ledgerPath);
 
         var service = new DataverseService(url);
         try
@@ -154,6 +156,7 @@ internal static class LiveTest
                 {
                     Context = context,
                     TableLogicalName = tableLogicalName,
+                    TableMetadataId = tableId,
                     DisplayName = "Live Text",
                     SchemaSuffix = columnSuffix,
                     Description = "dvtui live text " + runMarker,
@@ -179,6 +182,18 @@ internal static class LiveTest
                 retrieveAsIfPublished: false,
                 CancellationToken.None
             ).GetAwaiter().GetResult();
+            if( fresh.MetadataId != columnId
+                || !string.Equals(
+                    fresh.LogicalName,
+                    columnLogicalName,
+                    StringComparison.OrdinalIgnoreCase
+                )
+                || fresh.MaxLength != ColumnDefaults.TextLength )
+            {
+                throw new InvalidOperationException(
+                    "Column readback did not match the created identity."
+                );
+            }
             Console.WriteLine(
                 $"Read back column: {fresh.SchemaName} "
                 + $"len={fresh.MaxLength}"
@@ -189,6 +204,7 @@ internal static class LiveTest
                 {
                     Context = context,
                     TableLogicalName = tableLogicalName,
+                    TableMetadataId = tableId,
                     ColumnLogicalName = columnLogicalName,
                     ExpectedMetadataId = fresh.MetadataId,
                     SetDisplayName = true,
@@ -208,7 +224,9 @@ internal static class LiveTest
 
             schema.PublishTableAsync(
                 tableLogicalName,
-                CancellationToken.None
+                CancellationToken.None,
+                context,
+                tableId
             ).GetAwaiter().GetResult();
             Console.WriteLine("Published table.");
 
@@ -218,6 +236,13 @@ internal static class LiveTest
                 retrieveAsIfPublished: true,
                 CancellationToken.None
             ).GetAwaiter().GetResult();
+            if( published.MetadataId != columnId
+                || published.DisplayName != "Live Text Edited" )
+            {
+                throw new InvalidOperationException(
+                    "Published column readback did not match the edit."
+                );
+            }
             Console.WriteLine(
                 $"Published display name: {published.DisplayName}"
             );
@@ -236,19 +261,47 @@ internal static class LiveTest
                 tableLogicalName,
                 columnLogicalName,
                 columnId,
-                CancellationToken.None
+                CancellationToken.None,
+                tableId,
+                context
             ).GetAwaiter().GetResult();
             Console.WriteLine("Deleted column.");
             ledger.Remove("column");
+            columnId = Guid.Empty;
 
             Console.WriteLine("Lifecycle complete. Cleaning up table...");
-            CleanupTable(
-                service,
-                tableLogicalName,
-                tableId,
-                ledger
-            );
             return 0;
+        }
+        catch( SchemaWriteOutcomeUnknownException ex )
+        {
+            if( ex.MetadataId.HasValue )
+            {
+                if( tableId == Guid.Empty && string.IsNullOrWhiteSpace(
+                    columnLogicalName
+                ) )
+                {
+                    tableId = ex.MetadataId.Value;
+                    ledger.Add(
+                        "table",
+                        $"{tableLogicalName} id={tableId} outcome=unknown"
+                    );
+                }
+                else if( columnId == Guid.Empty
+                    && !string.IsNullOrWhiteSpace(columnLogicalName) )
+                {
+                    columnId = ex.MetadataId.Value;
+                    ledger.Add(
+                        "column",
+                        $"{columnLogicalName} id={columnId} outcome=unknown"
+                    );
+                }
+            }
+
+            Console.Error.WriteLine(
+                "Lifecycle outcome is unknown: " + ex.Message
+            );
+            ledger.Add("error", ex.Message);
+            return 1;
         }
         catch( Exception ex )
         {
@@ -257,6 +310,72 @@ internal static class LiveTest
             );
             ledger.Add("error", ex.Message);
             return 1;
+        }
+        finally
+        {
+            CleanupColumn(
+                schema,
+                context,
+                tableLogicalName,
+                columnLogicalName,
+                tableId,
+                columnId,
+                ledger
+            );
+            CleanupTable(
+                service,
+                tableLogicalName,
+                tableId,
+                ledger
+            );
+        }
+    }
+
+    private static void CleanupColumn(
+        DataverseSchemaService schema,
+        SolutionWriteContext context,
+        string tableLogicalName,
+        string columnLogicalName,
+        Guid tableId,
+        Guid columnId,
+        Ledger ledger
+    )
+    {
+        if( tableId == Guid.Empty || columnId == Guid.Empty )
+        {
+            return;
+        }
+
+        try
+        {
+            using var cancellation = new CancellationTokenSource(
+                TimeSpan.FromSeconds(30)
+            );
+            schema.DeleteColumnAsync(
+                tableLogicalName,
+                columnLogicalName,
+                columnId,
+                cancellation.Token,
+                tableId,
+                context
+            ).GetAwaiter().GetResult();
+            ledger.Remove("column");
+            Console.WriteLine("Cleaned up column: " + columnLogicalName);
+        }
+        catch( Exception ex ) when( IsMetadataNotFound(ex) )
+        {
+            ledger.Remove("column");
+            Console.WriteLine("Column already absent: " + columnLogicalName);
+        }
+        catch( Exception ex )
+        {
+            Console.Error.WriteLine(
+                "Column cleanup failed: " + ex.Message
+            );
+            ledger.Add(
+                "cleanup-error",
+                $"column={columnLogicalName} id={columnId} {ex.Message}"
+            );
         }
     }
 
@@ -267,18 +386,51 @@ internal static class LiveTest
         Ledger ledger
     )
     {
+        if( tableId == Guid.Empty )
+        {
+            return;
+        }
+
         try
         {
+            using var cancellation = new CancellationTokenSource(
+                TimeSpan.FromSeconds(30)
+            );
+            var entity = service.GetEntityAsync(
+                tableLogicalName,
+                tableId,
+                cancellation.Token
+            ).GetAwaiter().GetResult();
+            if( entity.Entity.MetadataId != tableId
+                || !string.Equals(
+                    entity.Entity.LogicalName,
+                    tableLogicalName,
+                    StringComparison.OrdinalIgnoreCase
+                ) )
+            {
+                throw new InvalidOperationException(
+                    "Cleanup identity verification failed."
+                );
+            }
+
             service.DeleteTableAsync(
                 tableLogicalName,
                 tableId,
-                CancellationToken.None
+                cancellation.Token
             ).GetAwaiter().GetResult();
+            VerifyTableAbsent(service, tableLogicalName, tableId, cancellation.Token);
             ledger.Remove("table");
             Console.WriteLine("Deleted table: " + tableLogicalName);
         }
         catch( Exception ex )
         {
+            if( IsMetadataNotFound(ex) )
+            {
+                ledger.Remove("table");
+                Console.WriteLine("Table already absent: " + tableLogicalName);
+                return;
+            }
+
             Console.Error.WriteLine(
                 "Table cleanup failed: " + ex.Message
             );
@@ -287,6 +439,55 @@ internal static class LiveTest
                 $"table={tableLogicalName} {ex.Message}"
             );
         }
+    }
+
+    private static void VerifyTableAbsent(
+        DataverseService service,
+        string tableLogicalName,
+        Guid tableId,
+        CancellationToken cancellationToken
+    )
+    {
+        try
+        {
+            service.GetEntityAsync(
+                tableLogicalName,
+                tableId,
+                cancellationToken
+            ).GetAwaiter().GetResult();
+        }
+        catch( Exception ex ) when( IsMetadataNotFound(ex) )
+        {
+            return;
+        }
+
+        throw new InvalidOperationException(
+            "Table cleanup was sent, but the table is still present."
+        );
+    }
+
+    private static bool IsMetadataNotFound(Exception exception)
+    {
+        for( var current = exception; current != null; current = current.InnerException )
+        {
+            if( current.Message.Contains(
+                "not found",
+                StringComparison.OrdinalIgnoreCase
+            )
+                || current.Message.Contains(
+                    "does not exist",
+                    StringComparison.OrdinalIgnoreCase
+                )
+                || current.Message.Contains(
+                    "cannot be found",
+                    StringComparison.OrdinalIgnoreCase
+                ) )
+            {
+                return true;
+            }
+        }
+
+        return false;
     }
 
     private static string BuildName(string prefix, string suffix)

@@ -10,8 +10,6 @@ internal sealed class SolutionSelectionScreen
     private const int RefreshIntervalMilliseconds = 80;
     private const int MinimumWidth = 60;
     private const int MinimumHeight = 10;
-    private const int SidebarWidthDivisor = 5;
-    private const int PanelHorizontalOverhead = 4;
     private const int ShutdownTimeoutMilliseconds = 2000;
     private readonly Func<CancellationToken, Task<List<DataverseSolution>>>
         _load;
@@ -241,8 +239,10 @@ internal sealed class SolutionSelectionScreen
             return new Text("Enlarge the terminal (60 x 10). Q: quit.");
         }
 
-        var sidebarWidth = width / SidebarWidthDivisor;
-        var list = new Panel(RenderSolutions(sidebarWidth - PanelHorizontalOverhead))
+        var sidebarWidth = TuiLayout.GetSidebarWidth(width);
+        var list = new Panel(
+            RenderSolutions(sidebarWidth - TuiLayout.PanelHorizontalOverhead)
+        )
             .Header("Solutions")
             .RoundedBorder()
             .BorderColor(_detailsFocused ? Color.Grey : Color.Grey58)

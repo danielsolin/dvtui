@@ -304,6 +304,22 @@ def test_solution_browser_small_terminal():
     print("solution-browser small terminal passed")
 
 
+def test_solution_browser_readonly_disables_writes():
+    master_fd, process = start_process("solution-browser-readonly")
+    try:
+        data = read_until(master_fd, "3 component rows")
+        press_key(master_fd, "n")
+        data += read_until(master_fd, "Managed solution: read-only")
+        assert "Writes disabled" in data
+        assert "N: new (disabled)" in data
+        press_key(master_fd, "\x1b")
+        wait_idle(master_fd)
+    finally:
+        stop_process(process)
+        os.close(master_fd)
+    print("solution-browser read-only passed")
+
+
 def test_solution_browser_tall_terminal():
     master_fd, process = start_process("solution-browser", (80, 40))
     try:
@@ -403,8 +419,10 @@ def test_table_columns_navigates_and_deletes():
     master_fd, process = start_process("table-columns")
     try:
         data = read_until(master_fd, "new_custom")
-        data += read_until(master_fd, "new_standard")
+        data += read_available(master_fd, 0.5)
         assert "2 columns" in data
+        assert "new_standard" in data
+        assert data.index("new_custom") < data.index("new_standard")
         # Select the deletable column and delete it.
         press_key(master_fd, "D")
         final = drain_until_exit(master_fd, process)
@@ -425,6 +443,10 @@ def test_create_table_submits():
             time.sleep(0.05)
         read_bounded(master_fd)
         press_key(master_fd, "\r")
+        intermediate = read_available(master_fd, 0.3)
+        assert process.poll() is None
+        assert "Table created" not in intermediate
+        press_key(master_fd, "\x13")
         final = drain_until_exit(master_fd, process)
         assert "Table created" in final
         assert "submit" in final
@@ -443,7 +465,7 @@ def test_create_table_can_cancel():
             os.write(master_fd, bytes([char]))
             time.sleep(0.05)
         read_bounded(master_fd)
-        press_key(master_fd, "\r")
+        press_key(master_fd, "\x13")
         time.sleep(0.3)
         os.write(master_fd, b"\x1b")
         final = drain_until_exit(master_fd, process, timeout=5)
@@ -466,6 +488,10 @@ def test_column_editor_creates():
             time.sleep(0.05)
         read_bounded(master_fd)
         press_key(master_fd, "\r")
+        intermediate = read_available(master_fd, 0.3)
+        assert process.poll() is None
+        assert "Column created" not in intermediate
+        press_key(master_fd, "\x13")
         final = drain_until_exit(master_fd, process)
         assert "Column created" in final
         assert "submit" in final
@@ -489,7 +515,7 @@ def test_column_editor_edits():
             os.write(master_fd, bytes([char]))
             time.sleep(0.05)
         read_bounded(master_fd)
-        press_key(master_fd, "\r")
+        press_key(master_fd, "\x13")
         final = drain_until_exit(master_fd, process)
         assert "Column saved" in final
         assert "submit" in final
@@ -505,6 +531,7 @@ def main():
         test_solution_selection_navigates_and_selects,
         test_solution_browser_navigates_and_esc,
         test_solution_browser_small_terminal,
+        test_solution_browser_readonly_disables_writes,
         test_solution_browser_tall_terminal,
         test_solution_browser_wide_terminal,
         test_solution_browser_wide_small_terminal,
