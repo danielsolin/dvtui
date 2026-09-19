@@ -511,6 +511,7 @@ public class DataverseService : IDisposable
         {
             fields.Add(new DataverseField
             {
+                LogicalName = attribute.LogicalName ?? string.Empty,
                 SchemaName = attribute.SchemaName ?? string.Empty,
                 DisplayName = GetLabel(attribute.DisplayName),
                 Type = attribute.AttributeType?.ToString() ?? string.Empty,

@@ -87,7 +87,7 @@ internal static class EntityDetailsView
     {
         var name = field.SchemaName;
 
-        if( name == entity.PrimaryIdAttribute )
+        if( MatchesAttribute(field, entity.PrimaryIdAttribute) )
         {
             return new Text(
                 $"{name} (primary key)",
@@ -95,7 +95,7 @@ internal static class EntityDetailsView
             );
         }
 
-        if( name == entity.PrimaryNameAttribute )
+        if( MatchesAttribute(field, entity.PrimaryNameAttribute) )
         {
             return new Text(
                 $"{name} (primary name)",
@@ -104,6 +104,28 @@ internal static class EntityDetailsView
         }
 
         return new Text(name);
+    }
+
+    private static bool MatchesAttribute(
+        DataverseField field,
+        string attributeName
+    )
+    {
+        if( string.IsNullOrWhiteSpace(attributeName) )
+        {
+            return false;
+        }
+
+        return string.Equals(
+                   field.LogicalName,
+                   attributeName,
+                   StringComparison.OrdinalIgnoreCase
+               )
+            || string.Equals(
+                   field.SchemaName,
+                   attributeName,
+                   StringComparison.OrdinalIgnoreCase
+               );
     }
 
     private static void AddRow(Table table, string label, string? value)

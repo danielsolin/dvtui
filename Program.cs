@@ -91,18 +91,23 @@ internal static class Program
 
     private static void RunSolutionLoop(DataverseService service)
     {
+        DataverseSolution? activeSolution = null;
+
         while( true )
         {
-            var solution = SolutionSelectionScreen.Show(
-                service.GetSolutionsAsync
-            );
-            if( solution == null )
+            if( activeSolution == null )
             {
-                return;
+                activeSolution = SolutionSelectionScreen.Show(
+                    service.GetSolutionsAsync
+                );
+                if( activeSolution == null )
+                {
+                    return;
+                }
             }
 
             var selection = SolutionBrowserScreen.Show(
-                solution,
+                activeSolution,
                 service.GetSolutionComponentsAsync,
                 service.GetEntityAsync
             );
@@ -111,9 +116,16 @@ internal static class Program
                 return;
             }
 
-            var context = LoadContext(service, solution);
+            if( selection.Result == SolutionBrowserResult.BackToSolutions )
+            {
+                activeSolution = null;
+                continue;
+            }
+
+            var context = LoadContext(service, activeSolution);
             if( context == null )
             {
+                activeSolution = null;
                 continue;
             }
 

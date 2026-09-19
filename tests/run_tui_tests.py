@@ -261,6 +261,11 @@ def test_solution_browser_navigates_and_esc():
     master_fd, process = start_process("solution-browser")
     try:
         data = read_until(master_fd, "Components")
+        data += read_until(master_fd, "3 component rows")
+        press_key(master_fd, "\t")
+        press_key(master_fd, "\x1b[F")
+        data += read_until(master_fd, "AccountId (primary key)")
+        data += read_available(master_fd, 0.5)
         press_key(master_fd, "\x1b[B")
         data += read_until(master_fd, "contact")
         press_key(master_fd, "\x1b")
@@ -270,6 +275,8 @@ def test_solution_browser_navigates_and_esc():
         assert "Table: account" in data
         assert "Table: contact" in data
         assert "Table: product" in data
+        assert "AccountId (primary key)" in data
+        assert "Name (primary name)" in data
         assert "Esc: solutions" in data
         assert "Q: quit" in data
     finally:

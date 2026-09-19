@@ -27,7 +27,9 @@ var entity = new DataverseEntity
     MetadataId = Guid.Parse("00000000-0000-0000-0000-000000000001"),
     LogicalName = "account",
     DisplayName = "Accounts",
-    Description = "Customer accounts"
+    Description = "Customer accounts",
+    PrimaryIdAttribute = "accountid",
+    PrimaryNameAttribute = "name"
 };
 var contact = new DataverseEntity
 {
@@ -90,10 +92,34 @@ var components = new List<DataverseSolutionComponent>
 };
 var fields = new List<DataverseField>
 {
-    new() { SchemaName = "accountid", DisplayName = "Account ID", Type = "accountid" },
-    new() { SchemaName = "name", DisplayName = "Name", Type = "string" },
-    new() { SchemaName = "new_note", DisplayName = "Note", Type = "memo" },
-    new() { SchemaName = "parentid", DisplayName = "Parent", Type = "lookup" }
+    new()
+    {
+        LogicalName = "accountid",
+        SchemaName = "AccountId",
+        DisplayName = "Account ID",
+        Type = "accountid"
+    },
+    new()
+    {
+        LogicalName = "name",
+        SchemaName = "Name",
+        DisplayName = "Name",
+        Type = "string"
+    },
+    new()
+    {
+        LogicalName = "new_note",
+        SchemaName = "New_Note",
+        DisplayName = "Note",
+        Type = "memo"
+    },
+    new()
+    {
+        LogicalName = "parentid",
+        SchemaName = "ParentId",
+        DisplayName = "Parent",
+        Type = "lookup"
+    }
 };
 
 if( mode == "solution-selection" )
