@@ -508,9 +508,7 @@ internal sealed class ApplicationScreenFlow
 
             var outcome = ScreenRunner.RunSchemaMutation(
                 "Deleting column " + column.LogicalName
-                    + " from table " + tableLogicalName
-                    + " in solution " + context.SolutionUniqueName
-                    + " at " + context.EnvironmentUrl,
+                    + " from table " + tableLogicalName,
                 token => _schemaService.DeleteColumnAsync(
                     new DeleteColumnRequest
                     {
@@ -561,9 +559,7 @@ internal sealed class ApplicationScreenFlow
             }
 
             var outcome = ScreenRunner.RunSchemaMutation(
-                "Publishing table " + tableLogicalName
-                    + " in solution " + context.SolutionUniqueName
-                    + " at " + context.EnvironmentUrl,
+                "Publishing table " + tableLogicalName,
                 token => _schemaService.PublishTableAsync(
                     new PublishTableRequest
                     {

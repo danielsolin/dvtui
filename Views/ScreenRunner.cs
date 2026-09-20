@@ -353,17 +353,15 @@ internal static class ScreenRunner
     )
     {
         var width = Math.Max(1, AnsiConsole.Profile.Width);
-        return new Panel(new Rows(
-            new Text(operationDescription),
-            Progress.RenderStatus(
-                width,
-                status,
-                Style.Parse("yellow"),
-                showActiveMessage: false
-            )
+        return new Panel(Progress.RenderStatus(
+            width,
+            status,
+            Style.Parse("yellow"),
+            showActiveMessage: true
         ))
             .Header("Dataverse operation")
             .RoundedBorder()
             .Expand();
     }
+
 }
