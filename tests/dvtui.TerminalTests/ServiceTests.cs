@@ -1401,7 +1401,6 @@ internal static class ServiceTests
 
     private static void TestProgressRemovesCompletedEarlierState()
     {
-        using var host = Progress.Attach();
         var firstRelease = new TaskCompletionSource(
             TaskCreationOptions.RunContinuationsAsynchronously
         );

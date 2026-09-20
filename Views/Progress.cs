@@ -9,7 +9,6 @@ internal static class Progress
 {
     private const int MinimumPulseWidth = 4;
     private const int MaximumPulseWidth = 12;
-    private static readonly AsyncLocal<int> HostDepth = new();
     private static readonly object SyncRoot = new();
     private static ProgressState? _current;
     private static bool _drainAfterRelease;
@@ -49,12 +48,6 @@ internal static class Progress
         return true;
     }
 
-    public static IDisposable Attach()
-    {
-        HostDepth.Value++;
-        return new Scope(() => HostDepth.Value--);
-    }
-
     public static Task Show(
         string message,
         Func<CancellationToken, Task> callback
@@ -80,9 +73,7 @@ internal static class Progress
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(message);
         ArgumentNullException.ThrowIfNull(callback);
-        return HostDepth.Value > 0
-            ? RunAttached(message, cancellationToken, callback)
-            : RunStandalone(message, cancellationToken, callback);
+        return Run(message, cancellationToken, callback);
     }
 
     public static Task<T> Show<T>(
@@ -110,9 +101,7 @@ internal static class Progress
     {
         ArgumentException.ThrowIfNullOrWhiteSpace(message);
         ArgumentNullException.ThrowIfNull(callback);
-        return HostDepth.Value > 0
-            ? RunAttached(message, cancellationToken, callback)
-            : RunStandalone(message, cancellationToken, callback);
+        return Run(message, cancellationToken, callback);
     }
 
     public static IRenderable RenderStatus(
@@ -147,7 +136,7 @@ internal static class Progress
         );
     }
 
-    private static async Task RunAttached(
+    private static async Task Run(
         string message,
         CancellationToken cancellationToken,
         Func<CancellationToken, Task> callback
@@ -160,7 +149,7 @@ internal static class Progress
         );
     }
 
-    private static async Task<T> RunAttached<T>(
+    private static async Task<T> Run<T>(
         string message,
         CancellationToken cancellationToken,
         Func<CancellationToken, Task<T>> callback
@@ -171,73 +160,6 @@ internal static class Progress
             () => callback(state.Token),
             CancellationToken.None
         );
-    }
-
-    private static async Task RunStandalone(
-        string message,
-        CancellationToken cancellationToken,
-        Func<CancellationToken, Task> callback
-    )
-    {
-        if( Console.IsInputRedirected || Console.IsOutputRedirected )
-        {
-            await RunAttached(message, cancellationToken, callback);
-            return;
-        }
-
-        AnsiConsole.Clear();
-        await AnsiConsole.Live(RenderStandalone(message))
-            .StartAsync(async context =>
-            {
-                using var host = Attach();
-                var operation = RunAttached(
-                    message,
-                    cancellationToken,
-                    callback
-                );
-                while( !operation.IsCompleted )
-                {
-                    DiscardPendingInput("Progress");
-                    context.UpdateTarget(RenderStandalone(message));
-                    await Task.Delay(TuiConstants.RefreshIntervalMilliseconds);
-                }
-
-                await operation;
-            });
-    }
-
-    private static async Task<T> RunStandalone<T>(
-        string message,
-        CancellationToken cancellationToken,
-        Func<CancellationToken, Task<T>> callback
-    )
-    {
-        if( Console.IsInputRedirected || Console.IsOutputRedirected )
-        {
-            return await RunAttached(message, cancellationToken, callback);
-        }
-
-        T result = default!;
-        AnsiConsole.Clear();
-        await AnsiConsole.Live(RenderStandalone(message))
-            .StartAsync(async context =>
-            {
-                using var host = Attach();
-                var operation = RunAttached(
-                    message,
-                    cancellationToken,
-                    callback
-                );
-                while( !operation.IsCompleted )
-                {
-                    DiscardPendingInput("Progress");
-                    context.UpdateTarget(RenderStandalone(message));
-                    await Task.Delay(TuiConstants.RefreshIntervalMilliseconds);
-                }
-
-                result = await operation;
-            });
-        return result;
     }
 
     private static ProgressState Begin(
@@ -256,18 +178,6 @@ internal static class Progress
         }
 
         return state;
-    }
-
-    private static IRenderable RenderStandalone(string message)
-    {
-        var width = Math.Max(1, AnsiConsole.Profile.Width);
-        var content = new Rows(
-            RenderStatus(width, message, TuiColors.SecondaryText)
-        );
-        return new Panel(content)
-            .Header("Working")
-            .RoundedBorder()
-            .Expand();
     }
 
     private static string RenderPulse(int width, ProgressState state)
@@ -350,25 +260,6 @@ internal static class Progress
                 }
 
                 next = next.Previous;
-            }
-        }
-    }
-
-    private sealed class Scope : IDisposable
-    {
-        private readonly Action _dispose;
-        private int _disposed;
-
-        public Scope(Action dispose)
-        {
-            _dispose = dispose;
-        }
-
-        public void Dispose()
-        {
-            if( Interlocked.Exchange(ref _disposed, 1) == 0 )
-            {
-                _dispose();
             }
         }
     }

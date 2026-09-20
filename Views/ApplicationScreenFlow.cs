@@ -236,9 +236,16 @@ internal sealed class ApplicationScreenFlow
             pendingTables.Contains(entity.MetadataId)
         );
         var loadColumns = true;
+        SchemaMutation? pendingMutation = null;
         while( true )
         {
-            var action = RunTableColumnsScreen(screen, loadColumns);
+            var action = RunTableColumnsScreen(
+                screen,
+                loadColumns,
+                pendingMutation
+            );
+            pendingMutation = null;
+            ConsumeMutationResult(screen, entity, pendingTables);
             SessionLog.Info(
                 "UI.TableColumns",
                 "Screen action=" + action
@@ -310,17 +317,12 @@ internal sealed class ApplicationScreenFlow
                         + " metadataId=" + pendingColumn.MetadataId
                 );
                 screen.ResetAction();
-                if( DeleteColumn(
+                pendingMutation = PrepareDeleteColumn(
                     context,
                     entity.LogicalName,
                     entity.MetadataId,
                     pendingColumn
-                ) )
-                {
-                    pendingTables.Add(entity.MetadataId);
-                    screen.SetPendingChanges(true);
-                    loadColumns = true;
-                }
+                );
             }
             else if( action == TableColumnsAction.Publish )
             {
@@ -330,34 +332,34 @@ internal sealed class ApplicationScreenFlow
                         + " metadataId=" + entity.MetadataId
                 );
                 screen.ResetAction();
-                if( PublishTable(
+                pendingMutation = PreparePublish(
                     context,
                     entity.LogicalName,
                     entity.MetadataId
-                ) )
-                {
-                    pendingTables.Remove(entity.MetadataId);
-                    screen.SetPendingChanges(false);
-                }
+                );
             }
         }
     }
 
     private static TableColumnsAction RunTableColumnsScreen(
         TableColumnsScreen screen,
-        bool loadColumns
+        bool loadColumns,
+        SchemaMutation? mutation
     )
     {
         SessionLog.Info(
             "UI.TableColumns",
             "Render loop started loadColumns=" + loadColumns
+                + " mutation=" + (mutation?.Description ?? "none")
         );
         AnsiConsole.Clear();
         AnsiConsole.Live(screen.Render())
             .StartAsync(context => ScreenRunner.RunTableColumnsAsync(
                 screen,
                 context,
-                loadColumns
+                loadColumns,
+                null,
+                mutation
             ))
             .GetAwaiter()
             .GetResult();
@@ -467,7 +469,7 @@ internal sealed class ApplicationScreenFlow
         return screen.MutationSucceeded;
     }
 
-    private bool DeleteColumn(
+    private SchemaMutation? PrepareDeleteColumn(
         SolutionWriteContext context,
         string tableLogicalName,
         Guid tableMetadataId,
@@ -497,16 +499,17 @@ internal sealed class ApplicationScreenFlow
                     "Delete blocked by dependencies count=" + dependencies.Count
                 );
                 ShowDependencies(dependencies);
-                return false;
+                return null;
             }
 
             if( !ConfirmDeleteColumn(context, tableLogicalName, column) )
             {
                 SessionLog.Info("UI.DeleteColumn", "Delete confirmation cancelled");
-                return false;
+                return null;
             }
 
-            var outcome = ScreenRunner.RunSchemaMutation(
+            return new SchemaMutation(
+                SchemaMutationKind.DeleteColumn,
                 "Deleting column " + column.LogicalName
                     + " from table " + tableLogicalName,
                 token => _schemaService.DeleteColumnAsync(
@@ -519,27 +522,53 @@ internal sealed class ApplicationScreenFlow
                         Context = context
                     },
                     token
-                ),
-                out var status
+                )
             );
-            if( outcome == SchemaMutationOutcome.Succeeded )
-            {
-                SessionLog.Info("UI.DeleteColumn", "Delete completed");
-                return true;
-            }
-
-            ShowOperationResult("Delete column", status);
-            return false;
         }
         catch( Exception ex )
         {
             SessionLog.Exception("UI.DeleteColumn", ex, "Delete workflow failed");
             ShowOperationResult("Delete column", ex.Message);
-            return false;
+            return null;
         }
     }
 
-    private bool PublishTable(
+    private void ConsumeMutationResult(
+        TableColumnsScreen screen,
+        DataverseEntity entity,
+        HashSet<Guid> pendingTables
+    )
+    {
+        var result = screen.MutationResult;
+        if( result == null )
+        {
+            return;
+        }
+        screen.ResetMutationResult();
+        if( result.Outcome == SchemaMutationOutcome.Succeeded )
+        {
+            if( result.Kind == SchemaMutationKind.PublishTable )
+            {
+                pendingTables.Remove(entity.MetadataId);
+                SessionLog.Info("UI.Publish", "Publish completed");
+            }
+            else
+            {
+                pendingTables.Add(entity.MetadataId);
+                SessionLog.Info("UI.DeleteColumn", "Delete completed");
+            }
+            return;
+        }
+
+        ShowOperationResult(
+            result.Kind == SchemaMutationKind.DeleteColumn
+                ? "Delete column"
+                : "Publish table",
+            result.Status
+        );
+    }
+
+    private SchemaMutation? PreparePublish(
         SolutionWriteContext context,
         string tableLogicalName,
         Guid tableMetadataId
@@ -555,10 +584,11 @@ internal sealed class ApplicationScreenFlow
             if( !ConfirmPublishTable(context, tableLogicalName) )
             {
                 SessionLog.Info("UI.Publish", "Publish confirmation cancelled");
-                return false;
+                return null;
             }
 
-            var outcome = ScreenRunner.RunSchemaMutation(
+            return new SchemaMutation(
+                SchemaMutationKind.PublishTable,
                 "Publishing table " + tableLogicalName,
                 token => _schemaService.PublishTableAsync(
                     new PublishTableRequest
@@ -568,23 +598,14 @@ internal sealed class ApplicationScreenFlow
                         Context = context
                     },
                     token
-                ),
-                out var status
+                )
             );
-            if( outcome == SchemaMutationOutcome.Succeeded )
-            {
-                SessionLog.Info("UI.Publish", "Publish completed");
-                return true;
-            }
-
-            ShowOperationResult("Publish table", status);
-            return false;
         }
         catch( Exception ex )
         {
             SessionLog.Exception("UI.Publish", ex, "Publish workflow failed");
             ShowOperationResult("Publish table", ex.Message);
-            return false;
+            return null;
         }
     }
 

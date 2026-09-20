@@ -12,6 +12,24 @@ internal enum SchemaMutationOutcome
     Unknown
 }
 
+internal enum SchemaMutationKind
+{
+    DeleteColumn,
+    PublishTable
+}
+
+internal sealed record SchemaMutation(
+    SchemaMutationKind Kind,
+    string Description,
+    Func<CancellationToken, Task> Operation
+);
+
+internal sealed record SchemaMutationResult(
+    SchemaMutationKind Kind,
+    SchemaMutationOutcome Outcome,
+    string Status
+);
+
 internal static class ScreenRunner
 {
     internal const int FormPollIntervalMilliseconds = 50;
@@ -26,7 +44,6 @@ internal static class ScreenRunner
         where TScreen : IFormScreen
     {
         var renderTarget = render ?? screen.Render;
-        using var progressHost = Progress.Attach();
         while( true )
         {
             var lastRevision = -1;
@@ -140,15 +157,29 @@ internal static class ScreenRunner
         TableColumnsScreen screen,
         LiveDisplayContext context,
         bool loadColumns,
-        Func<CancellationToken, Task>? loadFactory = null
+        Func<CancellationToken, Task>? loadFactory = null,
+        SchemaMutation? mutation = null
     )
     {
         loadFactory ??= screen.LoadAsync;
-        using var progressHost = Progress.Attach();
         using var cancellation = new CancellationTokenSource();
         Task? loadTask = loadColumns
             ? loadFactory(cancellation.Token)
             : null;
+        Task? mutationTask = mutation == null
+            ? null
+            : Progress.Show(
+                mutation.Description,
+                cancellation.Token,
+                mutation.Operation
+            );
+        if( mutation != null )
+        {
+            SessionLog.Info(
+                "UI.SchemaMutation",
+                "Started operation=" + mutation.Description
+            );
+        }
         try
         {
             var lastRevision = -1;
@@ -159,6 +190,31 @@ internal static class ScreenRunner
                 if( loadTask?.IsCompleted == true )
                 {
                     loadTask = null;
+                    refresh = true;
+                }
+                if( mutation != null
+                    && mutationTask != null
+                    && mutationTask.IsCompleted )
+                {
+                    var finished = mutationTask;
+                    mutationTask = null;
+                    var result = await CollectMutationResult(
+                        mutation,
+                        finished
+                    );
+                    screen.CompleteMutation(result);
+                    if( result.Outcome == SchemaMutationOutcome.Succeeded )
+                    {
+                        if( result.Kind == SchemaMutationKind.PublishTable )
+                        {
+                            screen.SetPendingChanges(false);
+                        }
+                        else
+                        {
+                            screen.SetPendingChanges(true);
+                            loadTask = loadFactory(cancellation.Token);
+                        }
+                    }
                     refresh = true;
                 }
 
@@ -222,6 +278,10 @@ internal static class ScreenRunner
             {
                 ObserveLateTask(loadTask);
             }
+            if( mutationTask != null )
+            {
+                ObserveLateTask(mutationTask);
+            }
         }
     }
 
@@ -236,132 +296,63 @@ internal static class ScreenRunner
         );
     }
 
-    internal static SchemaMutationOutcome RunSchemaMutation(
-        string operationDescription,
-        Func<CancellationToken, Task> operation,
-        out string resultStatus
+    private static async Task<SchemaMutationResult> CollectMutationResult(
+        SchemaMutation mutation,
+        Task operation
     )
     {
-        SessionLog.Info(
-            "UI.SchemaMutation",
-            "Started operation=" + operationDescription
-        );
-        var outcome = SchemaMutationOutcome.Failed;
-        var status = operationDescription;
-        var panel = CreateOperationPanel(operationDescription, status);
-        AnsiConsole.Clear();
-        AnsiConsole.Live(panel)
-            .StartAsync(async displayContext =>
-            {
-                using var progressHost = Progress.Attach();
-                Task mutationTask;
-                try
-                {
-                    SessionLog.Debug(
-                        "UI.SchemaMutation",
-                        "Dispatching operation=" + operationDescription
-                    );
-                    mutationTask = Progress.Show(
-                        operationDescription,
-                        operation
-                    );
-                }
-                catch( Exception ex )
-                {
-                    SessionLog.Exception(
-                        "UI.SchemaMutation",
-                        ex,
-                        "Could not dispatch operation=" + operationDescription
-                    );
-                    status = ex.Message;
-                    displayContext.UpdateTarget(
-                        CreateOperationPanel(operationDescription, status)
-                    );
-                    return;
-                }
-
-                while( !mutationTask.IsCompleted )
-                {
-                    Progress.DiscardPendingInput("SchemaMutation");
-
-                    displayContext.UpdateTarget(
-                        CreateOperationPanel(operationDescription, status)
-                    );
-                    await Task.Delay(FormPollIntervalMilliseconds);
-                }
-
-                try
-                {
-                    await mutationTask;
-                    outcome = SchemaMutationOutcome.Succeeded;
-                    status = operationDescription + " completed.";
-                    SessionLog.Info(
-                        "UI.SchemaMutation",
-                        "Succeeded operation=" + operationDescription
-                    );
-                }
-                catch( OperationCanceledException )
-                {
-                    outcome = SchemaMutationOutcome.Unknown;
-                    status = "The outcome of "
-                        + operationDescription
-                        + " is unknown. Verify Dataverse before retrying.";
-                    SessionLog.Warning(
-                        "UI.SchemaMutation",
-                        "Cancelled after dispatch operation="
-                            + operationDescription
-                    );
-                }
-                catch( SchemaWriteOutcomeUnknownException ex )
-                {
-                    outcome = SchemaMutationOutcome.Unknown;
-                    status = ex.Message;
-                    SessionLog.Exception(
-                        "UI.SchemaMutation",
-                        ex,
-                        "Outcome unknown operation=" + operationDescription
-                    );
-                }
-                catch( Exception ex )
-                {
-                    status = ex.Message;
-                    SessionLog.Exception(
-                        "UI.SchemaMutation",
-                        ex,
-                        "Failed operation=" + operationDescription
-                    );
-                }
-
-                displayContext.UpdateTarget(
-                    CreateOperationPanel(operationDescription, status)
-                );
-            })
-            .GetAwaiter()
-            .GetResult();
-        resultStatus = status;
-        SessionLog.Info(
-            "UI.SchemaMutation",
-            "Finished outcome=" + outcome
-                + " status=" + status
-        );
-        return outcome;
+        try
+        {
+            await operation;
+            SessionLog.Info(
+                "UI.SchemaMutation",
+                "Succeeded operation=" + mutation.Description
+            );
+            return new SchemaMutationResult(
+                mutation.Kind,
+                SchemaMutationOutcome.Succeeded,
+                mutation.Description + " completed."
+            );
+        }
+        catch( OperationCanceledException )
+        {
+            SessionLog.Warning(
+                "UI.SchemaMutation",
+                "Cancelled after dispatch operation="
+                    + mutation.Description
+            );
+            return new SchemaMutationResult(
+                mutation.Kind,
+                SchemaMutationOutcome.Unknown,
+                "The outcome of " + mutation.Description
+                    + " is unknown. Verify Dataverse before retrying."
+            );
+        }
+        catch( SchemaWriteOutcomeUnknownException ex )
+        {
+            SessionLog.Exception(
+                "UI.SchemaMutation",
+                ex,
+                "Outcome unknown operation=" + mutation.Description
+            );
+            return new SchemaMutationResult(
+                mutation.Kind,
+                SchemaMutationOutcome.Unknown,
+                ex.Message
+            );
+        }
+        catch( Exception ex )
+        {
+            SessionLog.Exception(
+                "UI.SchemaMutation",
+                ex,
+                "Failed operation=" + mutation.Description
+            );
+            return new SchemaMutationResult(
+                mutation.Kind,
+                SchemaMutationOutcome.Failed,
+                ex.Message
+            );
+        }
     }
-
-    private static IRenderable CreateOperationPanel(
-        string operationDescription,
-        string status
-    )
-    {
-        var width = Math.Max(1, AnsiConsole.Profile.Width);
-        return new Panel(Progress.RenderStatus(
-            width,
-            status,
-            Style.Parse("yellow"),
-            showActiveMessage: true
-        ))
-            .Header("Dataverse operation")
-            .RoundedBorder()
-            .Expand();
-    }
-
 }

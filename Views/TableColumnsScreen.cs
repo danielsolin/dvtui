@@ -39,6 +39,8 @@ internal sealed class TableColumnsScreen
     private ColumnEditorScreen? _editor;
     private int _loadGeneration;
     private int _revision;
+    private SchemaMutationResult? _mutationResult;
+    private bool _operationFailed;
 
     public TableColumnsScreen(
         IDataverseQueryService queryService,
@@ -60,6 +62,8 @@ internal sealed class TableColumnsScreen
     public ColumnEditorScreen? Editor => _editor;
     public int Revision => Volatile.Read(ref _revision);
     public bool Loading => _loading;
+
+    public SchemaMutationResult? MutationResult => _mutationResult;
 
     public Task LoadAsync(CancellationToken cancellationToken)
     {
@@ -180,6 +184,22 @@ internal sealed class TableColumnsScreen
     {
         _pendingAction = TableColumnsAction.None;
         _pendingColumn = null;
+        Touch();
+    }
+
+    public void CompleteMutation(SchemaMutationResult result)
+    {
+        _mutationResult = result;
+        _status = result.Status;
+        _operationFailed =
+            result.Outcome != SchemaMutationOutcome.Succeeded;
+        Touch();
+    }
+
+    public void ResetMutationResult()
+    {
+        _mutationResult = null;
+        _operationFailed = false;
         Touch();
     }
 
@@ -527,7 +547,11 @@ internal sealed class TableColumnsScreen
 
     private IRenderable RenderStatus()
     {
-        var style = _loading ? Style.Parse("yellow") : Style.Parse("green");
+        var style = _loading
+            ? Style.Parse("yellow")
+            : _operationFailed
+                ? Style.Parse("red")
+                : Style.Parse("green");
         var pending = _sessionPendingChanges
             ? " Pending changes in this session; publish explicitly."
             : string.Empty;

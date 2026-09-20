@@ -60,7 +60,6 @@ internal sealed class StartupScreen
         Func<string, CancellationToken, Task> connect
     )
     {
-        using var progressHost = Progress.Attach();
         var lastSize = (Width: 0, Height: 0);
         while( true )
         {

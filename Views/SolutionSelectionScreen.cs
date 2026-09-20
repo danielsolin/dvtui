@@ -59,7 +59,6 @@ internal sealed class SolutionSelectionScreen
         DataverseSolution?[] selected
     )
     {
-        using var progressHost = Progress.Attach();
         using var cancellation = new CancellationTokenSource();
         var pendingLoad = StartLoad(cancellation.Token);
         var lastSize = (Width: 0, Height: 0);
