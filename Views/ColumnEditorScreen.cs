@@ -9,10 +9,6 @@ namespace dvtui.Views;
 
 internal sealed class ColumnEditorScreen : IFormScreen
 {
-    private const int MaxDisplayLength = 125;
-    private const int MaxSuffixLength = 80;
-    private const int MaxDescriptionLength = 4000;
-
     private readonly DataverseService _service;
     private readonly SolutionWriteContext _context;
     private readonly string _tableLogicalName;
@@ -773,9 +769,10 @@ internal sealed class ColumnEditorScreen : IFormScreen
             return "Display name is required.";
         }
 
-        if( _displayName.Length > MaxDisplayLength )
+        if( _displayName.Length > ColumnDefaults.DisplayLengthMax )
         {
-            return "Display name must be 125 characters or fewer.";
+            return $"Display name must be {ColumnDefaults.DisplayLengthMax} "
+                + "characters or fewer.";
         }
 
         if( string.IsNullOrWhiteSpace(_schemaSuffix) )
@@ -783,14 +780,16 @@ internal sealed class ColumnEditorScreen : IFormScreen
             _schemaSuffix = ToSchemaSuffix(_displayName);
         }
 
-        if( _schemaSuffix.Length > MaxSuffixLength )
+        if( _schemaSuffix.Length > ColumnDefaults.SchemaNameLengthMax )
         {
-            return "Schema suffix must be 80 characters or fewer.";
+            return $"Schema suffix must be {ColumnDefaults.SchemaNameLengthMax} "
+                + "characters or fewer.";
         }
 
-        if( _description.Length > MaxDescriptionLength )
+        if( _description.Length > ColumnDefaults.DescriptionLengthMax )
         {
-            return "Description must be 4000 characters or fewer.";
+            return $"Description must be {ColumnDefaults.DescriptionLengthMax} "
+                + "characters or fewer.";
         }
 
         if( _kind == ColumnKind.Text || _kind == ColumnKind.MultilineText )

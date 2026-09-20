@@ -7,7 +7,6 @@ namespace dvtui.Views;
 
 internal static class Progress
 {
-    private const int RefreshIntervalMilliseconds = 80;
     private const int MinimumPulseWidth = 4;
     private const int MaximumPulseWidth = 12;
     private static readonly AsyncLocal<int> HostDepth = new();
@@ -194,7 +193,7 @@ internal static class Progress
                 {
                     DiscardPendingInput("Progress");
                     context.UpdateTarget(RenderStandalone(message));
-                    await Task.Delay(RefreshIntervalMilliseconds);
+                    await Task.Delay(TuiConstants.RefreshIntervalMilliseconds);
                 }
 
                 await operation;
@@ -227,7 +226,7 @@ internal static class Progress
                 {
                     DiscardPendingInput("Progress");
                     context.UpdateTarget(RenderStandalone(message));
-                    await Task.Delay(RefreshIntervalMilliseconds);
+                    await Task.Delay(TuiConstants.RefreshIntervalMilliseconds);
                 }
 
                 result = await operation;

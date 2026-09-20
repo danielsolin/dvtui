@@ -1,7 +1,5 @@
 using System.Globalization;
-using System.Net.Http;
 using System.Text;
-using System.Text.Json.Nodes;
 using dvtui.Models;
 
 using Microsoft.PowerPlatform.Dataverse.Client;
@@ -24,22 +22,10 @@ namespace dvtui.Services;
 public sealed class DataverseSchemaService
 {
     private const int ComponentTypeAttribute = 2;
-    private const int MaxSchemaNameLength = 80;
-    private const int MaxDisplayLength = 125;
-    private const int MaxDescriptionLength = 4000;
-    private const int MinTextLength = 1;
-    private const int MaxTextLength = ColumnDefaults.TextMaxLength;
-    private const int MinMemoLength = 1;
-    private const int MaxMemoLength = ColumnDefaults.MultilineMaxLength;
-    private const int MinPrecision = 0;
-    private const int MaxPrecision = DecimalAttributeMetadata.MaxSupportedPrecision;
-    private const int IntMin = ColumnDefaults.WholeNumberLowerBound;
-    private const int IntMax = ColumnDefaults.WholeNumberUpperBound;
-    private const decimal DecMin = ColumnDefaults.DecimalLowerBound;
-    private const decimal DecMax = ColumnDefaults.DecimalUpperBound;
 
     private readonly IDataverseExecutor _client;
     private readonly string _environmentUrl;
+    private readonly WebApiClient _webApiClient;
 
     public DataverseSchemaService(
         IDataverseExecutor client,
@@ -48,6 +34,7 @@ public sealed class DataverseSchemaService
     {
         _client = client;
         _environmentUrl = environmentUrl;
+        _webApiClient = new WebApiClient(client);
     }
 
     public async Task<SolutionWriteContext> LoadWriteContextAsync(
@@ -313,7 +300,7 @@ public sealed class DataverseSchemaService
         await VerifySolutionWriteScopeAsync(context, cancellationToken);
         RequirePublisherContext(context);
 
-        ValidateTableCreation(request);
+        SchemaValidation.ValidateTableCreation(request);
         var language = int.Parse(context.BaseLanguage, CultureInfo.InvariantCulture);
         var logicalName = BuildSchemaName(
             context.PublisherPrefix,
@@ -429,7 +416,7 @@ public sealed class DataverseSchemaService
         await VerifySolutionWriteScopeAsync(context, cancellationToken);
         RequirePublisherContext(context);
 
-        ValidateColumnCreation(request);
+        SchemaValidation.ValidateColumnCreation(request);
         RequireTableIdentity(request.TableMetadataId);
         if( request.TableMetadataId != Guid.Empty )
         {
@@ -600,7 +587,7 @@ public sealed class DataverseSchemaService
             );
         }
 
-        ValidateColumnUpdate(request, fresh);
+        SchemaValidation.ValidateColumnUpdate(request, fresh);
 
         var changed = false;
         var displayName = fresh.DisplayName;
@@ -733,7 +720,7 @@ public sealed class DataverseSchemaService
         {
             try
             {
-                await UpdateRequirementLevelViaWebApiAsync(
+                await _webApiClient.UpdateRequirementLevelAsync(
                     request,
                     requirement ?? RequirementLevels.Optional,
                     context,
@@ -836,14 +823,12 @@ public sealed class DataverseSchemaService
         {
             dependencies.Add(new DependencyInfo
             {
-                ComponentType = GetOptionValue(
-                    entity,
+                ComponentType = entity.GetOptionValue(
                     "dependentcomponenttype"
-                ) ?? GetOptionValue(entity, "componenttype"),
-                ObjectId = GetGuidValue(
-                    entity,
+                ) ?? entity.GetOptionValue("componenttype"),
+                ObjectId = entity.GetGuidValue(
                     "dependentcomponentobjectid"
-                ) ?? GetGuidValue(entity, "objectid"),
+                ) ?? entity.GetGuidValue("objectid"),
                 Name = entity.GetAttributeValue<string>(
                         "dependentcomponentname"
                     )
@@ -1233,7 +1218,7 @@ public sealed class DataverseSchemaService
         var isManaged = solution.GetAttributeValue<bool>("ismanaged");
         var solutionId = solution.GetAttributeValue<Guid>("solutionid");
         var uniqueName = solution.GetAttributeValue<string>("uniquename");
-        var publisherId = GetGuidValue(solution, "publisherid");
+        var publisherId = solution.GetGuidValue("publisherid");
         if( solutionId != context.SolutionId )
         {
             throw new InvalidOperationException(
@@ -1471,308 +1456,6 @@ public sealed class DataverseSchemaService
         return response.AttributeMetadata;
     }
 
-    private async Task UpdateRequirementLevelViaWebApiAsync(
-        UpdateColumnRequest request,
-        string requirement,
-        SolutionWriteContext context,
-        CancellationToken cancellationToken
-    )
-    {
-        if( request.TableMetadataId == Guid.Empty )
-        {
-            SessionLog.Debug(
-                "Schema.UpdateColumn",
-                "Web API requirement fallback skipped without table metadata ID"
-            );
-            return;
-        }
-
-        if( _client is not IDataverseWebExecutor webExecutor )
-        {
-            SessionLog.Debug(
-                "Schema.UpdateColumn",
-                "Web API requirement fallback unavailable for test executor"
-            );
-            return;
-        }
-
-        var retrievePath = BuildRetrieveEntityPath(
-            request.TableLogicalName,
-            request.TableMetadataId
-        );
-        using var retrieveResponse =
-            await webExecutor.ExecuteWebRequestAsync(
-                HttpMethod.Get,
-                retrievePath,
-                string.Empty,
-                CreateWebApiHeaders(),
-                "application/json",
-                cancellationToken
-            );
-        var retrieveBody = await retrieveResponse.Content.ReadAsStringAsync(
-            cancellationToken
-        );
-        EnsureWebApiSuccess(retrieveResponse, retrieveBody, "metadata read");
-
-        var document = JsonNode.Parse(retrieveBody) as JsonObject
-            ?? throw new InvalidOperationException(
-                "The metadata read returned invalid JSON."
-            );
-        var entity = GetObject(document, "EntityMetadata")
-            ?? throw new InvalidOperationException(
-                "The metadata read did not return EntityMetadata."
-            );
-        var entityId = GetGuid(entity, "MetadataId");
-        if( entityId != request.TableMetadataId )
-        {
-            throw new ColumnConflictException(
-                "The selected table identity changed; reload before writing."
-            );
-        }
-
-        var attribute = FindAttribute(
-            entity,
-            request.ColumnLogicalName,
-            request.ExpectedMetadataId
-        );
-        if( attribute == null )
-        {
-            throw new ColumnConflictException(
-                "The selected column was not returned by the metadata read."
-            );
-        }
-
-        var currentRequirement = GetObject(attribute, "RequiredLevel")
-            ?? new JsonObject();
-        var previousValue = GetString(currentRequirement, "Value") ?? "<missing>";
-        currentRequirement["Value"] = ToWebApiRequirementLevel(requirement);
-        if( GetNode(currentRequirement, "CanBeChanged") == null )
-        {
-            currentRequirement["CanBeChanged"] = true;
-        }
-
-        if( GetNode(currentRequirement, "ManagedPropertyLogicalName") == null )
-        {
-            currentRequirement["ManagedPropertyLogicalName"] =
-                "canmodifyrequirementlevelsettings";
-        }
-
-        attribute["RequiredLevel"] = currentRequirement;
-        if( GetNode(attribute, "@odata.type") == null )
-        {
-            throw new InvalidOperationException(
-                "The metadata read did not return a type-specific column definition."
-            );
-        }
-        NormalizeWebApiAttributeType(attribute);
-
-        SessionLog.Debug(
-            "Schema.UpdateColumn",
-            "Web API requirement update table=" + request.TableLogicalName
-                + " column=" + request.ColumnLogicalName
-                + " previous=" + previousValue
-                + " requested=" + requirement
-        );
-
-        var updatePath = BuildAttributePath(
-            request.TableLogicalName,
-            request.ColumnLogicalName
-        );
-        var updateBody = attribute.ToJsonString();
-        using var updateResponse =
-            await webExecutor.ExecuteWebRequestAsync(
-                HttpMethod.Put,
-                updatePath,
-                updateBody,
-                CreateWebApiHeaders(context.SolutionUniqueName),
-                "application/json",
-                cancellationToken
-            );
-        var responseBody = await updateResponse.Content.ReadAsStringAsync(
-            cancellationToken
-        );
-        EnsureWebApiSuccess(updateResponse, responseBody, "metadata update");
-        SessionLog.Info(
-            "Schema.UpdateColumn",
-            "Web API requirement update completed table="
-                + request.TableLogicalName
-                + " column=" + request.ColumnLogicalName
-        );
-    }
-
-    private static string BuildRetrieveEntityPath(
-        string tableLogicalName,
-        Guid tableMetadataId
-    )
-    {
-        var filter = Uri.EscapeDataString(
-            "Microsoft.Dynamics.CRM.EntityFilters'Attributes'"
-        );
-        var logicalName = Uri.EscapeDataString(
-            "'" + EscapeODataString(tableLogicalName) + "'"
-        );
-        var metadataId = Uri.EscapeDataString(
-            tableMetadataId.ToString()
-        );
-        return "RetrieveEntity(EntityFilters=@filters,LogicalName=@logicalName,"
-            + "MetadataId=@metadataId,RetrieveAsIfPublished=@published)"
-            + "?@filters=" + filter
-            + "&@logicalName=" + logicalName
-            + "&@metadataId=" + metadataId
-            + "&@published=true";
-    }
-
-    private static string BuildAttributePath(
-        string tableLogicalName,
-        string columnLogicalName
-    )
-    {
-        return "EntityDefinitions(LogicalName='"
-            + EscapeODataString(tableLogicalName)
-            + "')/Attributes(LogicalName='"
-            + EscapeODataString(columnLogicalName)
-            + "')";
-    }
-
-    private static Dictionary<string, List<string>> CreateWebApiHeaders(
-        string? solutionUniqueName = null
-    )
-    {
-        var headers = new Dictionary<string, List<string>>
-        {
-            ["Accept"] = ["application/json"],
-            ["OData-MaxVersion"] = ["4.0"],
-            ["OData-Version"] = ["4.0"],
-            ["If-None-Match"] = ["null"]
-        };
-        if( !string.IsNullOrWhiteSpace(solutionUniqueName) )
-        {
-            headers["MSCRM.SolutionUniqueName"] = [solutionUniqueName];
-            headers["MSCRM.MergeLabels"] = ["true"];
-        }
-
-        return headers;
-    }
-
-    private static void EnsureWebApiSuccess(
-        HttpResponseMessage response,
-        string body,
-        string operation
-    )
-    {
-        if( response.IsSuccessStatusCode )
-        {
-            return;
-        }
-
-        throw new InvalidOperationException(
-            "Dataverse Web API " + operation + " failed with HTTP "
-                + (int)response.StatusCode + " " + response.ReasonPhrase
-                + ": " + SessionLog.SafeSingleLine(body)
-        );
-    }
-
-    private static JsonObject? FindAttribute(
-        JsonObject entity,
-        string logicalName,
-        Guid metadataId
-    )
-    {
-        var attributes = GetNode(entity, "Attributes") as JsonArray;
-        if( attributes == null )
-        {
-            return null;
-        }
-
-        foreach( var item in attributes )
-        {
-            if( item is not JsonObject attribute )
-            {
-                continue;
-            }
-
-            var candidateId = GetGuid(attribute, "MetadataId");
-            var candidateName = GetString(attribute, "LogicalName");
-            if( candidateId == metadataId
-                || string.Equals(
-                    candidateName,
-                    logicalName,
-                    StringComparison.OrdinalIgnoreCase
-                ) )
-            {
-                return attribute;
-            }
-        }
-
-        return null;
-    }
-
-    private static JsonObject? GetObject(JsonObject parent, string name)
-    {
-        return GetNode(parent, name) as JsonObject;
-    }
-
-    private static JsonNode? GetNode(JsonObject parent, string name)
-    {
-        foreach( var pair in parent )
-        {
-            if( string.Equals(pair.Key, name, StringComparison.OrdinalIgnoreCase) )
-            {
-                return pair.Value;
-            }
-        }
-
-        return null;
-    }
-
-    private static string? GetString(JsonObject parent, string name)
-    {
-        return GetNode(parent, name)?.GetValue<string>();
-    }
-
-    private static Guid GetGuid(JsonObject parent, string name)
-    {
-        var value = GetString(parent, name);
-        return Guid.TryParse(value, out var id) ? id : Guid.Empty;
-    }
-
-    private static string ToWebApiRequirementLevel(string requirement)
-    {
-        return requirement switch
-        {
-            RequirementLevels.Recommended => "Recommended",
-            RequirementLevels.Required => "ApplicationRequired",
-            _ => "None"
-        };
-    }
-
-    private static void NormalizeWebApiAttributeType(JsonObject attribute)
-    {
-        var type = GetString(attribute, "@odata.type");
-        if( string.IsNullOrWhiteSpace(type) )
-        {
-            return;
-        }
-
-        const string prefix = "Microsoft.Dynamics.CRM.";
-        var shortName = type.StartsWith("#" + prefix, StringComparison.Ordinal)
-            ? type[(prefix.Length + 1)..]
-            : type.StartsWith(prefix, StringComparison.Ordinal)
-                ? type[prefix.Length..]
-                : type;
-        if( shortName.StartsWith("Complex", StringComparison.Ordinal) )
-        {
-            shortName = shortName["Complex".Length..];
-        }
-
-        attribute["@odata.type"] = prefix + shortName;
-    }
-
-    private static string EscapeODataString(string value)
-    {
-        return value.Replace("'", "''", StringComparison.Ordinal);
-    }
-
     private async Task VerifyUpdatedColumnAsync(
         UpdateColumnRequest request,
         string displayName,
@@ -1897,289 +1580,6 @@ public sealed class DataverseSchemaService
     private static string BuildSchemaName(string prefix, string suffix)
     {
         return prefix + "_" + suffix;
-    }
-
-    private static void ValidateTableCreation(CreateTableRequest request)
-    {
-        RequireText(request.DisplayName, "Display name");
-        RequireText(request.PluralDisplayName, "Plural display name");
-        RequireText(request.SchemaSuffix, "Schema suffix");
-        RequireText(request.PrimaryNameDisplayName, "Primary name");
-        RequireText(request.PrimaryNameSchemaSuffix, "Primary name suffix");
-        ValidateSchemaSuffix(request.SchemaSuffix);
-        ValidateSchemaSuffix(request.PrimaryNameSchemaSuffix);
-        ValidateTextLength(
-            request.PrimaryNameMaxLength,
-            MinTextLength,
-            MaxTextLength,
-            "Primary name length"
-        );
-        if( request.Description != null
-            && request.Description.Length > MaxDescriptionLength )
-        {
-            throw new InvalidOperationException(
-                "Description is too long."
-            );
-        }
-    }
-
-    private static void ValidateColumnCreation(CreateColumnRequest request)
-    {
-        if( string.IsNullOrWhiteSpace(request.Context.PublisherPrefix) )
-        {
-            throw new InvalidOperationException(
-                "The solution publisher prefix is required."
-            );
-        }
-
-        RequireText(request.DisplayName, "Display name");
-        RequireText(request.SchemaSuffix, "Schema suffix");
-        ValidateSchemaSuffix(request.SchemaSuffix);
-        ValidateRequirementLevel(request.RequirementLevel);
-        if( request.Description != null
-            && request.Description.Length > MaxDescriptionLength )
-        {
-            throw new InvalidOperationException(
-                "Description is too long."
-            );
-        }
-
-        switch( request.Kind )
-        {
-            case ColumnKind.Text:
-                ValidateTextLength(
-                    request.MaxLength,
-                    MinTextLength,
-                    MaxTextLength,
-                    "Text length"
-                );
-                break;
-            case ColumnKind.MultilineText:
-                ValidateTextLength(
-                    request.MaxLength,
-                    MinMemoLength,
-                    MaxMemoLength,
-                    "Multiline length"
-                );
-                break;
-            case ColumnKind.WholeNumber:
-                ValidateNumericBounds(
-                    request.MinValue,
-                    request.MaxValue,
-                    IntMin,
-                    IntMax
-                );
-                ValidateWholeNumber(request.MinValue, "Minimum value");
-                ValidateWholeNumber(request.MaxValue, "Maximum value");
-                break;
-            case ColumnKind.Decimal:
-                ValidateNumericBounds(
-                    request.MinValue,
-                    request.MaxValue,
-                    DecMin,
-                    DecMax
-                );
-                ValidatePrecision(request.Precision);
-                break;
-            case ColumnKind.YesNo:
-                RequireText(request.BooleanTrueLabel, "Yes label");
-                RequireText(request.BooleanFalseLabel, "No label");
-                break;
-            default:
-                throw new InvalidOperationException(
-                    "Unsupported column type."
-                );
-        }
-    }
-
-    private static void ValidateColumnUpdate(
-        UpdateColumnRequest request,
-        DataverseColumn current
-    )
-    {
-        if( request.SetDisplayName )
-        {
-            RequireText(request.DisplayName, "Display name");
-        }
-
-        if( request.SetDescription
-            && request.Description.Length > MaxDescriptionLength )
-        {
-            throw new InvalidOperationException(
-                "Description is too long."
-            );
-        }
-
-        if( request.SetRequirementLevel )
-        {
-            ValidateRequirementLevel(request.RequirementLevel);
-        }
-
-        if( request.NewMaxLength.HasValue )
-        {
-            if( current.Kind == ColumnKind.Text )
-            {
-                ValidateTextLength(
-                    request.NewMaxLength,
-                    MinTextLength,
-                    MaxTextLength,
-                    "Text length"
-                );
-            }
-            else if( current.Kind == ColumnKind.MultilineText )
-            {
-                ValidateTextLength(
-                    request.NewMaxLength,
-                    MinMemoLength,
-                    MaxMemoLength,
-                    "Multiline length"
-                );
-            }
-            else
-            {
-                throw new InvalidOperationException(
-                    "Maximum length can only be changed on text columns."
-                );
-            }
-        }
-    }
-
-    private static void ValidateWholeNumber(
-        decimal? value,
-        string field
-    )
-    {
-        if( value.HasValue && value.Value != decimal.Truncate(value.Value) )
-        {
-            throw new InvalidOperationException(
-                "Whole number value is invalid: " + field
-            );
-        }
-    }
-
-    private static void RequireText(string value, string field)
-    {
-        if( string.IsNullOrWhiteSpace(value) )
-        {
-            throw new InvalidOperationException(
-                $"{field} is required."
-            );
-        }
-
-        if( value.Length > MaxDisplayLength )
-        {
-            throw new InvalidOperationException(
-                $"{field} is too long."
-            );
-        }
-    }
-
-    private static void ValidateSchemaSuffix(string suffix)
-    {
-        if( string.IsNullOrWhiteSpace(suffix) )
-        {
-            throw new InvalidOperationException(
-                "Schema suffix is required."
-            );
-        }
-
-        if( !char.IsLetter(suffix[0]) )
-        {
-            throw new InvalidOperationException(
-                "Schema suffix must start with a letter."
-            );
-        }
-
-        foreach( var character in suffix )
-        {
-            if( char.IsLetterOrDigit(character) || character == '_' )
-            {
-                continue;
-            }
-
-            throw new InvalidOperationException(
-                "Schema suffix may only contain letters, digits, and "
-                + "underscores."
-            );
-        }
-
-        if( suffix.Length > MaxSchemaNameLength )
-        {
-            throw new InvalidOperationException(
-                "Schema suffix is too long."
-            );
-        }
-    }
-
-    private static void ValidateTextLength(
-        int? value,
-        int min,
-        int max,
-        string field
-    )
-    {
-        if( value.HasValue && (value.Value < min || value.Value > max) )
-        {
-            throw new InvalidOperationException(
-                $"{field} must be between {min} and {max}."
-            );
-        }
-    }
-
-    private static void ValidateNumericBounds(
-        decimal? min,
-        decimal? max,
-        decimal lowerBound,
-        decimal upperBound
-    )
-    {
-        if( min.HasValue && min.Value < lowerBound )
-        {
-            throw new InvalidOperationException(
-                "Minimum value is below the supported range."
-            );
-        }
-
-        if( max.HasValue && max.Value > upperBound )
-        {
-            throw new InvalidOperationException(
-                "Maximum value is above the supported range."
-            );
-        }
-
-        if( min.HasValue && max.HasValue && min.Value > max.Value )
-        {
-            throw new InvalidOperationException(
-                "Minimum value must be less than or equal to maximum."
-            );
-        }
-    }
-
-    private static void ValidatePrecision(int? precision)
-    {
-        if( precision.HasValue
-            && (precision.Value < MinPrecision
-                || precision.Value > MaxPrecision) )
-        {
-            throw new InvalidOperationException(
-                $"Precision must be between {MinPrecision} and "
-                + MaxPrecision + "."
-            );
-        }
-    }
-
-    private static void ValidateRequirementLevel(string level)
-    {
-        if( level == RequirementLevels.Optional
-            || level == RequirementLevels.Recommended
-            || level == RequirementLevels.Required )
-        {
-            return;
-        }
-
-        throw new InvalidOperationException(
-            "The selected requirement level is not supported."
-        );
     }
 
     private static AttributeMetadata CreateAttributeMetadata(
@@ -2456,33 +1856,6 @@ public sealed class DataverseSchemaService
         builder.Append("</entity></entities>");
         builder.Append("</importexportxml>");
         return builder.ToString();
-    }
-
-    private static int? GetOptionValue(Entity entity, string attribute)
-    {
-        if( !entity.Contains(attribute) )
-        {
-            return null;
-        }
-
-        var value = entity.GetAttributeValue<Microsoft.Xrm.Sdk.OptionSetValue>(
-            attribute);
-        return value?.Value;
-    }
-
-    private static Guid? GetGuidValue(Entity entity, string attribute)
-    {
-        if( !entity.Contains(attribute) )
-        {
-            return null;
-        }
-
-        return entity[attribute] switch
-        {
-            Guid value => value,
-            EntityReference reference => reference.Id,
-            _ => null
-        };
     }
 
     public static DataverseColumn CreateColumn(

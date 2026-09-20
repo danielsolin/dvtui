@@ -22,10 +22,6 @@ internal sealed class SolutionBrowserSelection
 
 internal sealed class SolutionBrowserScreen
 {
-    private const int RefreshIntervalMilliseconds = 80;
-    private const int MinimumWidth = 60;
-    private const int MinimumHeight = 10;
-    private const int ShutdownTimeoutMilliseconds = 2000;
     private readonly DataverseSolution _solution;
     private readonly Func<CancellationToken, Task<List<DataverseSolutionComponent>>>
         _load;
@@ -236,7 +232,7 @@ internal sealed class SolutionBrowserScreen
                     lastSize = size;
                 }
 
-                await Task.Delay(RefreshIntervalMilliseconds);
+                await Task.Delay(TuiConstants.RefreshIntervalMilliseconds);
             }
         }
         finally
@@ -263,7 +259,7 @@ internal sealed class SolutionBrowserScreen
 
     private static async Task WaitForCleanupAsync(Task cleanup)
     {
-        var timeout = Task.Delay(ShutdownTimeoutMilliseconds);
+        var timeout = Task.Delay(TuiConstants.ShutdownTimeoutMilliseconds);
         if( await Task.WhenAny(cleanup, timeout) == cleanup )
         {
             await cleanup;
@@ -525,7 +521,8 @@ internal sealed class SolutionBrowserScreen
     {
         var width = AnsiConsole.Profile.Width;
         var height = AnsiConsole.Profile.Height;
-        if( width < MinimumWidth || height < MinimumHeight )
+        if( width < TuiConstants.MinimumWidth
+            || height < TuiConstants.MinimumHeight )
         {
             return new Text(
                 "Enlarge the terminal (60 x 10). Q: quit | Esc: list/back."

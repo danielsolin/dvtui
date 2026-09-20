@@ -6,7 +6,6 @@ using Microsoft.PowerPlatform.Dataverse.Client.Model;
 using Microsoft.Xrm.Sdk.Messages;
 using Microsoft.Xrm.Sdk.Query;
 using Label = Microsoft.Xrm.Sdk.Label;
-using OptionSetValue = Microsoft.Xrm.Sdk.OptionSetValue;
 using EntityFilters = Microsoft.Xrm.Sdk.Metadata.EntityFilters;
 using EntityMetadata = Microsoft.Xrm.Sdk.Metadata.EntityMetadata;
 using AttributeMetadata = Microsoft.Xrm.Sdk.Metadata.AttributeMetadata;
@@ -555,23 +554,14 @@ public class DataverseService : IDisposable
             ObjectId = entity.Contains("objectid")
                 ? entity.GetAttributeValue<Guid>("objectid")
                 : null,
-            ComponentType = GetOptionValue(entity, "componenttype") ?? 0,
+            ComponentType = entity.GetOptionValue("componenttype") ?? 0,
             RootComponentId = entity.Contains("rootsolutioncomponentid")
                 ? entity.GetAttributeValue<Guid>("rootsolutioncomponentid")
                 : null,
-            RootComponentBehavior = GetOptionValue(entity, "rootcomponentbehavior")
+            RootComponentBehavior = entity.GetOptionValue(
+                "rootcomponentbehavior"
+            )
         };
-    }
-
-    private static int? GetOptionValue(Entity entity, string attribute)
-    {
-        if( !entity.Contains(attribute) )
-        {
-            return null;
-        }
-
-        var value = entity.GetAttributeValue<OptionSetValue>(attribute);
-        return value?.Value;
     }
 
     private async Task EnrichTableComponentsAsync(

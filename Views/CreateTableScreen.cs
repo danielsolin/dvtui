@@ -9,10 +9,6 @@ namespace dvtui.Views;
 
 internal sealed class CreateTableScreen : IFormScreen
 {
-    private const int MaxDisplayLength = 125;
-    private const int MaxSuffixLength = 80;
-    private const int MaxDescriptionLength = 4000;
-
     private readonly DataverseService _service;
     private readonly SolutionWriteContext _context;
 
@@ -364,9 +360,10 @@ internal sealed class CreateTableScreen : IFormScreen
             return "Display name is required.";
         }
 
-        if( _displayName.Length > MaxDisplayLength )
+        if( _displayName.Length > ColumnDefaults.DisplayLengthMax )
         {
-            return "Display name must be 125 characters or fewer.";
+            return $"Display name must be {ColumnDefaults.DisplayLengthMax} "
+                + "characters or fewer.";
         }
 
         if( string.IsNullOrWhiteSpace(_pluralDisplayName) )
@@ -374,9 +371,10 @@ internal sealed class CreateTableScreen : IFormScreen
             _pluralDisplayName = _displayName + "s";
         }
 
-        if( _pluralDisplayName.Length > MaxDisplayLength )
+        if( _pluralDisplayName.Length > ColumnDefaults.DisplayLengthMax )
         {
-            return "Plural display name must be 125 characters or fewer.";
+            return $"Plural display name must be {ColumnDefaults.DisplayLengthMax} "
+                + "characters or fewer.";
         }
 
         if( string.IsNullOrWhiteSpace(_schemaSuffix) )
@@ -384,9 +382,10 @@ internal sealed class CreateTableScreen : IFormScreen
             _schemaSuffix = ToSchemaSuffix(_displayName);
         }
 
-        if( _schemaSuffix.Length > MaxSuffixLength )
+        if( _schemaSuffix.Length > ColumnDefaults.SchemaNameLengthMax )
         {
-            return "Schema suffix must be 80 characters or fewer.";
+            return $"Schema suffix must be {ColumnDefaults.SchemaNameLengthMax} "
+                + "characters or fewer.";
         }
 
         if( string.IsNullOrWhiteSpace(_primaryNameSuffix) )
@@ -394,15 +393,17 @@ internal sealed class CreateTableScreen : IFormScreen
             _primaryNameSuffix = "name";
         }
 
-        if( _primaryNameDisplay.Length > MaxDisplayLength
+        if( _primaryNameDisplay.Length > ColumnDefaults.DisplayLengthMax
             || string.IsNullOrWhiteSpace(_primaryNameDisplay) )
         {
-            return "Primary name display must be 1-125 characters.";
+            return $"Primary name display must be 1-{ColumnDefaults.DisplayLengthMax} "
+                + "characters.";
         }
 
-        if( _description.Length > MaxDescriptionLength )
+        if( _description.Length > ColumnDefaults.DescriptionLengthMax )
         {
-            return "Description must be 4000 characters or fewer.";
+            return $"Description must be {ColumnDefaults.DescriptionLengthMax} "
+                + "characters or fewer.";
         }
 
         if( !int.TryParse(

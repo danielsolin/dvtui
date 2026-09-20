@@ -8,8 +8,6 @@ namespace dvtui.Views;
 internal sealed class StartupScreen
 {
     private const string ApplicationName = "dvtui";
-    private const int RefreshIntervalMilliseconds = 80;
-    private const int ConnectionShutdownTimeoutMilliseconds = 2000;
     private const int FormWidth = 60;
     private readonly UrlTextBox _url;
     private string _message = "Enter: connect | Q: quit";
@@ -131,7 +129,7 @@ internal sealed class StartupScreen
                 lastSize = size;
             }
 
-            Thread.Sleep(RefreshIntervalMilliseconds);
+            Thread.Sleep(TuiConstants.RefreshIntervalMilliseconds);
         }
     }
 
@@ -192,7 +190,7 @@ internal sealed class StartupScreen
         try
         {
             if( !connection.Wait(
-                TimeSpan.FromMilliseconds(ConnectionShutdownTimeoutMilliseconds)
+                TimeSpan.FromMilliseconds(TuiConstants.ShutdownTimeoutMilliseconds)
             ) )
             {
                 ObserveFaults(connection);

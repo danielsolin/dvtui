@@ -17,4 +17,7 @@ public static class ColumnDefaults
     public const int DecimalPrecision = 2;
     public const int DecimalMaxPrecision = 10;
     public const int PrimaryNameLength = 100;
+    public const int DisplayLengthMax = 125;
+    public const int DescriptionLengthMax = 4000;
+    public const int SchemaNameLengthMax = 80;
 }

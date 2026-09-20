@@ -8,10 +8,6 @@ namespace dvtui.Views;
 
 internal sealed class SolutionSelectionScreen
 {
-    private const int RefreshIntervalMilliseconds = 80;
-    private const int MinimumWidth = 60;
-    private const int MinimumHeight = 10;
-    private const int ShutdownTimeoutMilliseconds = 2000;
     private readonly Func<CancellationToken, Task<List<DataverseSolution>>>
         _load;
     private List<DataverseSolution> _solutions = [];
@@ -142,7 +138,7 @@ internal sealed class SolutionSelectionScreen
                     lastSize = size;
                 }
 
-                await Task.Delay(RefreshIntervalMilliseconds);
+                await Task.Delay(TuiConstants.RefreshIntervalMilliseconds);
             }
         }
         finally
@@ -159,7 +155,7 @@ internal sealed class SolutionSelectionScreen
 
     private static async Task WaitForCleanupAsync(Task cleanup)
     {
-        var timeout = Task.Delay(ShutdownTimeoutMilliseconds);
+        var timeout = Task.Delay(TuiConstants.ShutdownTimeoutMilliseconds);
         if( await Task.WhenAny(cleanup, timeout) == cleanup )
         {
             await cleanup;
@@ -267,7 +263,8 @@ internal sealed class SolutionSelectionScreen
     {
         var width = AnsiConsole.Profile.Width;
         var height = AnsiConsole.Profile.Height;
-        if( width < MinimumWidth || height < MinimumHeight )
+        if( width < TuiConstants.MinimumWidth
+            || height < TuiConstants.MinimumHeight )
         {
             return new Text("Enlarge the terminal (60 x 10). Q: quit.");
         }
