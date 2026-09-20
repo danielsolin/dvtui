@@ -39,6 +39,8 @@ DETAILS_PROMPT_WIDE = "DVTUI | 3 entities | Esc: back | Q: quit"
 DETAILS_PROMPT_WIDE_SMALL = "DVTUI | 3 entities | Esc: back | Q: quit"
 DETAILS_PROMPT_WIDE_TALL = "DVTUI | 3 entities | Esc: back | Q: quit"
 DETAILS_PROMPT_WIDE_TALL_SMALL = "DVTUI | 3 entities | Esc: back | Q: quit"
+DELETE_MUTATION = "Deleting column new_custom"
+PUBLISH_MUTATION = "Publishing table account"
 ACTIVE_PROCESSES = set()
 
 
@@ -480,6 +482,57 @@ def test_table_columns_edits_in_detail_pane():
     print("table-columns inline edit passed")
 
 
+def test_table_columns_delete_progress_stays_in_screen():
+    master_fd, process = start_process("table-columns-mutation")
+    try:
+        data = read_until(master_fd, "new_custom")
+        data += read_available(master_fd, 0.5)
+        assert "2 columns" in data
+        assert "new_standard" in data
+        press_key(master_fd, "D")
+        progress = read_until(master_fd, DELETE_MUTATION, timeout=5)
+        assert "Dataverse operation" not in progress
+        assert "new_standard" in progress
+        assert "━" in progress or "─" in progress
+        completed = read_until(master_fd, "Pending changes", timeout=10)
+        completed += read_available(master_fd, 1.0)
+        assert "1 column" in completed
+        assert "Dataverse operation" not in completed
+        press_key(master_fd, "\x1b")
+        final = drain_until_exit(master_fd, process)
+        assert "close" in final
+    finally:
+        stop_process(process)
+        os.close(master_fd)
+    print("table-columns delete progress passed")
+
+
+def test_table_columns_publish_progress_stays_in_screen():
+    master_fd, process = start_process("table-columns-mutation")
+    try:
+        data = read_until(master_fd, "new_custom")
+        data += read_available(master_fd, 0.5)
+        assert "2 columns" in data
+        press_key(master_fd, "P")
+        progress = read_until(master_fd, PUBLISH_MUTATION, timeout=5)
+        assert "Dataverse operation" not in progress
+        assert "new_custom" in progress
+        assert "━" in progress or "─" in progress
+        completed = read_until(
+            master_fd, "Publishing table account completed.", timeout=10
+        )
+        completed += read_available(master_fd, 1.0)
+        assert "Pending changes" not in completed
+        assert "Dataverse operation" not in completed
+        press_key(master_fd, "\x1b")
+        final = drain_until_exit(master_fd, process)
+        assert "close" in final
+    finally:
+        stop_process(process)
+        os.close(master_fd)
+    print("table-columns publish progress passed")
+
+
 def test_confirmation_stays_in_tui():
     master_fd, process = start_process("confirmation")
     try:
@@ -611,6 +664,8 @@ def main():
         test_table_columns_escape_returns_to_list,
         test_table_columns_navigates_and_deletes,
         test_table_columns_edits_in_detail_pane,
+        test_table_columns_delete_progress_stays_in_screen,
+        test_table_columns_publish_progress_stays_in_screen,
         test_confirmation_stays_in_tui,
         test_create_table_submits,
         test_create_table_locks_input_during_progress,

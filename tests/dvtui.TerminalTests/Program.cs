@@ -189,6 +189,23 @@ if( mode == "table-columns" )
     return 0;
 }
 
+if( mode == "table-columns-mutation" )
+{
+    var context = BuildWriteContext();
+    var services = BuildFakeServices(
+        context,
+        TimeSpan.FromSeconds(2)
+    );
+    var result = RunTableColumnsMutationScreen(
+        services.Query,
+        services.Schema,
+        context,
+        entity
+    );
+    Console.WriteLine(result);
+    return 0;
+}
+
 if( mode == "create-table" )
 {
     var context = BuildWriteContext();
@@ -393,6 +410,136 @@ static string RunTableColumnsScreen(
         }
     });
     return result;
+}
+
+static string RunTableColumnsMutationScreen(
+    IDataverseQueryService queryService,
+    IDataverseSchemaService schemaService,
+    SolutionWriteContext context,
+    DataverseEntity entity
+)
+{
+    var screen = new TableColumnsScreen(
+        queryService,
+        schemaService,
+        entity,
+        context
+    );
+    if( Console.IsInputRedirected || Console.IsOutputRedirected )
+    {
+        return "redirected";
+    }
+
+    var previousControlCMode = Console.TreatControlCAsInput;
+    string result = "close";
+    AnsiConsole.AlternateScreen(() =>
+    {
+        Console.TreatControlCAsInput = true;
+        AnsiConsole.Clear();
+        var loadColumns = true;
+        SchemaMutation? mutation = null;
+        try
+        {
+            while( true )
+            {
+                AnsiConsole.Clear();
+                AnsiConsole.Live(screen.Render())
+                    .StartAsync(ctx => ScreenRunner.RunTableColumnsAsync(
+                        screen,
+                        ctx,
+                        loadColumns,
+                        null,
+                        mutation
+                    ))
+                    .GetAwaiter()
+                    .GetResult();
+                loadColumns = false;
+                mutation = null;
+                var action = screen.PendingAction;
+                var pendingColumn = screen.PendingColumn;
+                if( action == TableColumnsAction.DeleteColumn
+                    && pendingColumn != null )
+                {
+                    screen.ResetAction();
+                    mutation = PrepareDeleteMutation(
+                        schemaService,
+                        context,
+                        entity,
+                        pendingColumn
+                    );
+                    continue;
+                }
+                if( action == TableColumnsAction.Publish )
+                {
+                    screen.ResetAction();
+                    mutation = PreparePublishMutation(
+                        schemaService,
+                        context,
+                        entity
+                    );
+                    continue;
+                }
+                result = action.ToString().ToLowerInvariant();
+                if( pendingColumn != null )
+                {
+                    result += ":" + pendingColumn.SchemaName;
+                }
+                break;
+            }
+        }
+        finally
+        {
+            AnsiConsole.Cursor.Show();
+            Console.TreatControlCAsInput = previousControlCMode;
+        }
+    });
+    return result;
+}
+
+static SchemaMutation PrepareDeleteMutation(
+    IDataverseSchemaService schemaService,
+    SolutionWriteContext context,
+    DataverseEntity entity,
+    DataverseColumn column
+)
+{
+    return new SchemaMutation(
+        SchemaMutationKind.DeleteColumn,
+        "Deleting column " + column.LogicalName
+            + " from table " + entity.LogicalName,
+        token => schemaService.DeleteColumnAsync(
+            new DeleteColumnRequest
+            {
+                TableLogicalName = entity.LogicalName,
+                ColumnLogicalName = column.LogicalName,
+                ExpectedMetadataId = column.MetadataId,
+                TableMetadataId = entity.MetadataId,
+                Context = context
+            },
+            token
+        )
+    );
+}
+
+static SchemaMutation PreparePublishMutation(
+    IDataverseSchemaService schemaService,
+    SolutionWriteContext context,
+    DataverseEntity entity
+)
+{
+    return new SchemaMutation(
+        SchemaMutationKind.PublishTable,
+        "Publishing table " + entity.LogicalName,
+        token => schemaService.PublishTableAsync(
+            new PublishTableRequest
+            {
+                TableLogicalName = entity.LogicalName,
+                TableMetadataId = entity.MetadataId,
+                Context = context
+            },
+            token
+        )
+    );
 }
 
 static string RunCreateTableScreen(

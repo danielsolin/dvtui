@@ -315,13 +315,13 @@ internal sealed class FakeSchemaService : IDataverseSchemaService
         }
     }
 
-    public Task PublishTableAsync(
+    public async Task PublishTableAsync(
         PublishTableRequest request,
         CancellationToken cancellationToken
     )
     {
         cancellationToken.ThrowIfCancellationRequested();
-        return Task.CompletedTask;
+        await WaitForOperationAsync(cancellationToken);
     }
 
     public Task DeleteTableAsync(
