@@ -9,11 +9,19 @@ namespace dvtui.Views;
 
 internal sealed class ApplicationScreenFlow
 {
-    private readonly DataverseService _service;
+    private readonly IDataverseQueryService _queryService;
+    private readonly IDataverseSchemaService _schemaService;
+    private readonly string _environmentUrl;
 
-    internal ApplicationScreenFlow(DataverseService service)
+    internal ApplicationScreenFlow(
+        IDataverseQueryService queryService,
+        IDataverseSchemaService schemaService,
+        string environmentUrl
+    )
     {
-        _service = service;
+        _queryService = queryService;
+        _schemaService = schemaService;
+        _environmentUrl = environmentUrl;
     }
 
     internal void Run()
@@ -35,7 +43,7 @@ internal sealed class ApplicationScreenFlow
                 pendingTables.Clear();
                 SessionLog.Screen("SolutionSelectionScreen", "enter");
                 activeSolution = SolutionSelectionScreen.Show(
-                    _service.GetSolutionsAsync
+                    _queryService.GetSolutionsAsync
                 );
                 SessionLog.Screen(
                     "SolutionSelectionScreen",
@@ -66,8 +74,8 @@ internal sealed class ApplicationScreenFlow
             );
             var selection = SolutionBrowserScreen.Show(
                 activeSolution,
-                _service.GetSolutionComponentsAsync,
-                _service.GetEntityAsync,
+                _queryService.GetSolutionComponentsAsync,
+                _queryService.GetEntityAsync,
                 activeContext?.CanWrite == true,
                 activeContext?.WriteDisabledReason
             );
@@ -139,7 +147,7 @@ internal sealed class ApplicationScreenFlow
         {
             var context = Progress.Show(
                 "Loading solution context...",
-                token => _service.CreateSchemaService()
+                token => _schemaService
                     .LoadWriteContextAsync(solution, token)
             )
                 .GetAwaiter().GetResult();
@@ -170,7 +178,7 @@ internal sealed class ApplicationScreenFlow
                 IsManaged = solution.IsManaged == true,
                 CanWrite = false,
                 WriteDisabledReason = ex.Message,
-                EnvironmentUrl = _service.EnvironmentUrl
+                EnvironmentUrl = _environmentUrl
             };
         }
     }
@@ -183,7 +191,7 @@ internal sealed class ApplicationScreenFlow
             "UI.CreateTable",
             "Opening form solution=" + context.SolutionUniqueName
         );
-        var screen = new CreateTableScreen(_service, context);
+        var screen = new CreateTableScreen(_schemaService, context);
         if( Console.IsInputRedirected || Console.IsOutputRedirected )
         {
             return;
@@ -221,7 +229,8 @@ internal sealed class ApplicationScreenFlow
         }
 
         var screen = new TableColumnsScreen(
-            _service,
+            _queryService,
+            _schemaService,
             entity,
             context,
             pendingTables.Contains(entity.MetadataId)
@@ -394,12 +403,12 @@ internal sealed class ApplicationScreenFlow
             {
                 var refreshed = Progress.Show(
                     "Loading column definition...",
-                    token => _service.GetColumnDefinitionAsync(
+                    token => _schemaService.GetColumnDefinitionAsync(
                         tableLogicalName,
                         existing.LogicalName,
                         retrieveAsIfPublished: true,
-                        context.BaseLanguage,
-                        token
+                        token,
+                        context.BaseLanguage
                     )
                 ).GetAwaiter().GetResult();
                 if( refreshed.MetadataId != existing.MetadataId )
@@ -434,7 +443,7 @@ internal sealed class ApplicationScreenFlow
         }
 
         var screen = new ColumnEditorScreen(
-            _service,
+            _schemaService,
             context,
             tableLogicalName,
             tableMetadataId,
@@ -475,7 +484,7 @@ internal sealed class ApplicationScreenFlow
         {
             var dependencies = Progress.Show(
                 "Checking column dependencies...",
-                token => _service.GetColumnDeleteDependenciesAsync(
+                token => _schemaService.GetColumnDeleteDependenciesAsync(
                     column.MetadataId,
                     token
                 )
@@ -502,13 +511,16 @@ internal sealed class ApplicationScreenFlow
                     + " from table " + tableLogicalName
                     + " in solution " + context.SolutionUniqueName
                     + " at " + context.EnvironmentUrl,
-                token => _service.DeleteColumnAsync(
-                    tableLogicalName,
-                    column.LogicalName,
-                    column.MetadataId,
-                    token,
-                    tableMetadataId,
-                    context
+                token => _schemaService.DeleteColumnAsync(
+                    new DeleteColumnRequest
+                    {
+                        TableLogicalName = tableLogicalName,
+                        ColumnLogicalName = column.LogicalName,
+                        ExpectedMetadataId = column.MetadataId,
+                        TableMetadataId = tableMetadataId,
+                        Context = context
+                    },
+                    token
                 ),
                 out var status
             );
@@ -552,11 +564,14 @@ internal sealed class ApplicationScreenFlow
                 "Publishing table " + tableLogicalName
                     + " in solution " + context.SolutionUniqueName
                     + " at " + context.EnvironmentUrl,
-                token => _service.PublishTableAsync(
-                    tableLogicalName,
-                    token,
-                    context,
-                    tableMetadataId
+                token => _schemaService.PublishTableAsync(
+                    new PublishTableRequest
+                    {
+                        TableLogicalName = tableLogicalName,
+                        TableMetadataId = tableMetadataId,
+                        Context = context
+                    },
+                    token
                 ),
                 out var status
             );

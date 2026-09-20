@@ -9,7 +9,7 @@ namespace dvtui.Views;
 
 internal sealed class CreateTableScreen : IFormScreen
 {
-    private readonly DataverseService _service;
+    private readonly IDataverseSchemaService _schemaService;
     private readonly SolutionWriteContext _context;
 
     private string _displayName = string.Empty;
@@ -31,11 +31,11 @@ internal sealed class CreateTableScreen : IFormScreen
     private int _revision;
 
     public CreateTableScreen(
-        DataverseService service,
+        IDataverseSchemaService schemaService,
         SolutionWriteContext context
     )
     {
-        _service = service;
+        _schemaService = schemaService;
         _context = context;
     }
 
@@ -182,7 +182,7 @@ internal sealed class CreateTableScreen : IFormScreen
                 )
             };
 
-            var tableId = await _service.CreateTableAsync(
+            var tableId = await _schemaService.CreateTableAsync(
                 request,
                 cancellationToken
             );

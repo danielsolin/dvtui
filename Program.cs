@@ -17,13 +17,13 @@ internal static class Program
             "terminal " + TerminalSession.GetDiagnostics()
         );
         TerminalSession.ConfigureWslBrowser();
-        DataverseService? service = null;
+        DataverseConnectionManager? connection = null;
         Console.CancelKeyPress += TerminalSession.HandleCancelKeyPress;
 
         try
         {
             TerminalSession.RunApplication(
-                () => service = ApplicationFlow.Run(args)
+                () => connection = ApplicationFlow.Run(args)
             );
         }
         catch( Exception ex )
@@ -37,7 +37,7 @@ internal static class Program
             Console.CancelKeyPress -= TerminalSession.HandleCancelKeyPress;
             try
             {
-                service?.Dispose();
+                connection?.Dispose();
             }
             catch( Exception ex )
             {

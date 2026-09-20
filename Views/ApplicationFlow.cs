@@ -4,9 +4,9 @@ namespace dvtui.Views;
 
 internal static class ApplicationFlow
 {
-    internal static DataverseService? Run(string[] args)
+    internal static DataverseConnectionManager? Run(string[] args)
     {
-        DataverseService? service = null;
+        DataverseConnectionManager? connection = null;
         SessionLog.Screen("StartupScreen", "enter");
         var connected = StartupScreen.Show(
             GetEnvironmentUrl(args),
@@ -16,7 +16,7 @@ internal static class ApplicationFlow
                     "UI.Connection",
                     "Connect requested environment=" + url
                 );
-                var candidate = new DataverseService(url);
+                var candidate = new DataverseConnectionManager(url);
                 var assigned = false;
                 try
                 {
@@ -25,7 +25,7 @@ internal static class ApplicationFlow
                         cancellationToken
                     );
                     cancellationToken.ThrowIfCancellationRequested();
-                    service = candidate;
+                    connection = candidate;
                     assigned = true;
                     SessionLog.Info(
                         "UI.Connection",
@@ -56,12 +56,16 @@ internal static class ApplicationFlow
             "connected=" + connected
         );
 
-        if( connected && service != null )
+        if( connected && connection != null )
         {
-            new ApplicationScreenFlow(service).Run();
+            new ApplicationScreenFlow(
+                connection.QueryService,
+                connection.SchemaService,
+                connection.EnvironmentUrl
+            ).Run();
         }
 
-        return service;
+        return connection;
     }
 
     private static string GetEnvironmentUrl(string[] args)

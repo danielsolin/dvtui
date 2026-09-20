@@ -9,7 +9,7 @@ namespace dvtui.Views;
 
 internal sealed class ColumnEditorScreen : IFormScreen
 {
-    private readonly DataverseService _service;
+    private readonly IDataverseSchemaService _schemaService;
     private readonly SolutionWriteContext _context;
     private readonly string _tableLogicalName;
     private readonly Guid _tableMetadataId;
@@ -47,14 +47,14 @@ internal sealed class ColumnEditorScreen : IFormScreen
     private int _revision;
 
     public ColumnEditorScreen(
-        DataverseService service,
+        IDataverseSchemaService schemaService,
         SolutionWriteContext context,
         string tableLogicalName,
         Guid tableMetadataId,
         DataverseColumn? existing
     )
     {
-        _service = service;
+        _schemaService = schemaService;
         _context = context;
         _tableLogicalName = tableLogicalName;
         _tableMetadataId = tableMetadataId;
@@ -630,7 +630,7 @@ internal sealed class ColumnEditorScreen : IFormScreen
             RequirementLevel = _requirement
         };
 
-        await _service.CreateColumnAsync(request, cancellationToken);
+        await _schemaService.CreateColumnAsync(request, cancellationToken);
         SessionLog.Info(
             "UI.ColumnEditor",
             "Create request completed table=" + _tableLogicalName
@@ -756,7 +756,10 @@ internal sealed class ColumnEditorScreen : IFormScreen
             RequirementLevel = _requirement
         };
 
-        var result = await _service.UpdateColumnAsync(request, cancellationToken);
+        var result = await _schemaService.UpdateColumnAsync(
+            request,
+            cancellationToken
+        );
         SessionLog.Info(
             "UI.ColumnEditor",
             "Update request completed column=" + _existing.LogicalName

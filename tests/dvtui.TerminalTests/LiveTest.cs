@@ -31,14 +31,14 @@ internal static class LiveTest
         Console.WriteLine("Run marker: " + runMarker);
         Console.WriteLine("Ledger: " + ledgerPath);
 
-        var service = new DataverseService(url);
+        var connection = new DataverseConnectionManager(url);
         try
         {
             Console.WriteLine("Connecting...");
-            service.Connect();
+            connection.Connect();
             Console.WriteLine("Connected.");
 
-            var solution = PickSolution(service, solutionName);
+            var solution = PickSolution(connection.QueryService, solutionName);
             if( solution == null )
             {
                 Console.Error.WriteLine(
@@ -52,7 +52,7 @@ internal static class LiveTest
                 + $"({solution.UniqueName})"
             );
 
-            var schema = service.CreateSchemaService();
+            var schema = connection.SchemaService;
             var context = schema.LoadWriteContextAsync(
                 solution,
                 CancellationToken.None
@@ -69,8 +69,13 @@ internal static class LiveTest
                 + $"lang={context.BaseLanguage}"
             );
 
-            return RunLifecycle(service, schema, context, runMarker,
-                ledger);
+            return RunLifecycle(
+                connection.QueryService,
+                schema,
+                context,
+                runMarker,
+                ledger
+            );
         }
         catch( Exception ex )
         {
@@ -80,18 +85,18 @@ internal static class LiveTest
         }
         finally
         {
-            service.Dispose();
+            connection.Dispose();
             ledger.Flush();
             SessionLog.Stop();
         }
     }
 
     private static DataverseSolution? PickSolution(
-        DataverseService service,
+        IDataverseQueryService queryService,
         string? name
     )
     {
-        var solutions = service.GetSolutionsAsync(
+        var solutions = queryService.GetSolutionsAsync(
             CancellationToken.None
         ).GetAwaiter().GetResult();
         var unmanaged = solutions
@@ -114,7 +119,7 @@ internal static class LiveTest
     }
 
     private static int RunLifecycle(
-        DataverseService service,
+        IDataverseQueryService queryService,
         DataverseSchemaService schema,
         SolutionWriteContext context,
         string runMarker,
@@ -201,7 +206,7 @@ internal static class LiveTest
                 $"Read back column: {fresh.SchemaName} "
                 + $"len={fresh.MaxLength}"
             );
-            var listed = service.GetColumnsAsync(
+            var listed = queryService.GetColumnsAsync(
                 tableLogicalName,
                 tableId,
                 CancellationToken.None
@@ -283,10 +288,13 @@ internal static class LiveTest
             );
 
             schema.PublishTableAsync(
-                tableLogicalName,
-                CancellationToken.None,
-                context,
-                tableId
+                new PublishTableRequest
+                {
+                    TableLogicalName = tableLogicalName,
+                    TableMetadataId = tableId,
+                    Context = context
+                },
+                CancellationToken.None
             ).GetAwaiter().GetResult();
             Console.WriteLine("Published table.");
 
@@ -319,12 +327,15 @@ internal static class LiveTest
             );
 
             schema.DeleteColumnAsync(
-                tableLogicalName,
-                columnLogicalName,
-                columnId,
-                CancellationToken.None,
-                tableId,
-                context
+                new DeleteColumnRequest
+                {
+                    TableLogicalName = tableLogicalName,
+                    ColumnLogicalName = columnLogicalName,
+                    ExpectedMetadataId = columnId,
+                    TableMetadataId = tableId,
+                    Context = context
+                },
+                CancellationToken.None
             ).GetAwaiter().GetResult();
             Console.WriteLine("Deleted column.");
             ledger.Remove("column");
@@ -384,7 +395,8 @@ internal static class LiveTest
                 ledger
             );
             CleanupTable(
-                service,
+                queryService,
+                schema,
                 tableLogicalName,
                 tableId,
                 ledger
@@ -413,17 +425,20 @@ internal static class LiveTest
                 TimeSpan.FromSeconds(30)
             );
             schema.DeleteColumnAsync(
-                tableLogicalName,
-                columnLogicalName,
-                columnId,
-                cancellation.Token,
-                tableId,
-                context
+                new DeleteColumnRequest
+                {
+                    TableLogicalName = tableLogicalName,
+                    ColumnLogicalName = columnLogicalName,
+                    ExpectedMetadataId = columnId,
+                    TableMetadataId = tableId,
+                    Context = context
+                },
+                cancellation.Token
             ).GetAwaiter().GetResult();
             ledger.Remove("column");
             Console.WriteLine("Cleaned up column: " + columnLogicalName);
         }
-        catch( Exception ex ) when( DataverseSchemaService.IsMetadataNotFound(ex) )
+        catch( Exception ex ) when( MetadataUtilities.IsMetadataNotFound(ex) )
         {
             ledger.Remove("column");
             Console.WriteLine("Column already absent: " + columnLogicalName);
@@ -441,7 +456,8 @@ internal static class LiveTest
     }
 
     private static void CleanupTable(
-        DataverseService service,
+        IDataverseQueryService queryService,
+        DataverseSchemaService schema,
         string tableLogicalName,
         Guid tableId,
         Ledger ledger
@@ -460,15 +476,15 @@ internal static class LiveTest
             DataverseEntityDetails entity;
             try
             {
-                entity = service.GetEntityAsync(
+                entity = queryService.GetEntityAsync(
                     tableLogicalName,
                     tableId,
                     cancellation.Token
                 ).GetAwaiter().GetResult();
             }
-            catch( Exception ex ) when( DataverseSchemaService.IsMetadataNotFound(ex) )
+            catch( Exception ex ) when( MetadataUtilities.IsMetadataNotFound(ex) )
             {
-                entity = service.GetEntityByLogicalNameAsync(
+                entity = queryService.GetEntityByLogicalNameAsync(
                     tableLogicalName,
                     cancellation.Token
                 ).GetAwaiter().GetResult();
@@ -485,17 +501,22 @@ internal static class LiveTest
                 );
             }
 
-            service.DeleteTableAsync(
+            schema.DeleteTableAsync(
                 tableLogicalName,
                 cancellation.Token
             ).GetAwaiter().GetResult();
-            VerifyTableAbsent(service, tableLogicalName, tableId, cancellation.Token);
+            VerifyTableAbsent(
+                queryService,
+                tableLogicalName,
+                tableId,
+                cancellation.Token
+            );
             ledger.Remove("table");
             Console.WriteLine("Deleted table: " + tableLogicalName);
         }
         catch( Exception ex )
         {
-            if( DataverseSchemaService.IsMetadataNotFound(ex) )
+            if( MetadataUtilities.IsMetadataNotFound(ex) )
             {
                 ledger.Remove("table");
                 Console.WriteLine("Table already absent: " + tableLogicalName);
@@ -513,7 +534,7 @@ internal static class LiveTest
     }
 
     private static void VerifyTableAbsent(
-        DataverseService service,
+        IDataverseQueryService queryService,
         string tableLogicalName,
         Guid tableId,
         CancellationToken cancellationToken
@@ -521,13 +542,13 @@ internal static class LiveTest
     {
         try
         {
-            service.GetEntityAsync(
+            queryService.GetEntityAsync(
                 tableLogicalName,
                 tableId,
                 cancellationToken
             ).GetAwaiter().GetResult();
         }
-        catch( Exception ex ) when( DataverseSchemaService.IsMetadataNotFound(ex) )
+        catch( Exception ex ) when( MetadataUtilities.IsMetadataNotFound(ex) )
         {
             return;
         }

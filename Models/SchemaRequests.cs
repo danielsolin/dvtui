@@ -48,6 +48,22 @@ public sealed class UpdateColumnRequest
     public string RequirementLevel { get; init; } = RequirementLevels.Optional;
 }
 
+public sealed class DeleteColumnRequest
+{
+    public string TableLogicalName { get; init; } = string.Empty;
+    public string ColumnLogicalName { get; init; } = string.Empty;
+    public Guid ExpectedMetadataId { get; init; }
+    public Guid TableMetadataId { get; init; }
+    public SolutionWriteContext? Context { get; init; }
+}
+
+public sealed class PublishTableRequest
+{
+    public string TableLogicalName { get; init; } = string.Empty;
+    public Guid TableMetadataId { get; init; }
+    public SolutionWriteContext? Context { get; init; }
+}
+
 public sealed class ColumnUpdateResult
 {
     public Guid MetadataId { get; init; }

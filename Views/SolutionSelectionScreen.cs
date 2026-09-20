@@ -162,13 +162,15 @@ internal sealed class SolutionSelectionScreen
         }
     }
 
-    private Task<List<DataverseSolution>> StartLoad(CancellationToken token)
+    private Task<List<DataverseSolution>> StartLoad(
+        CancellationToken cancellationToken
+    )
     {
         _status = "Loading solutions...";
         _loadFailed = false;
         _loadCancellation?.Dispose();
         _loadCancellation = CancellationTokenSource.CreateLinkedTokenSource(
-            token
+            cancellationToken
         );
         return Progress.Show(
             "Loading solutions...",

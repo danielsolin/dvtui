@@ -178,8 +178,13 @@ if( mode == "solution-browser" || mode == "solution-browser-readonly" )
 if( mode == "table-columns" )
 {
     var context = BuildWriteContext();
-    var service = BuildFakeService(context);
-    var result = RunTableColumnsScreen(service, context, entity);
+    var services = BuildFakeServices(context);
+    var result = RunTableColumnsScreen(
+        services.Query,
+        services.Schema,
+        context,
+        entity
+    );
     Console.WriteLine(result);
     return 0;
 }
@@ -187,8 +192,8 @@ if( mode == "table-columns" )
 if( mode == "create-table" )
 {
     var context = BuildWriteContext();
-    var service = BuildFakeService(context);
-    var result = RunCreateTableScreen(service, context);
+    var services = BuildFakeServices(context);
+    var result = RunCreateTableScreen(services.Schema, context);
     Console.WriteLine(result);
     return 0;
 }
@@ -196,8 +201,8 @@ if( mode == "create-table" )
 if( mode == "create-table-slow" )
 {
     var context = BuildWriteContext();
-    var service = BuildFakeService(context, TimeSpan.FromSeconds(10));
-    var result = RunCreateTableScreen(service, context);
+    var services = BuildFakeServices(context, TimeSpan.FromSeconds(10));
+    var result = RunCreateTableScreen(services.Schema, context);
     Console.WriteLine(result);
     return 0;
 }
@@ -205,8 +210,13 @@ if( mode == "create-table-slow" )
 if( mode == "column-editor" )
 {
     var context = BuildWriteContext();
-    var service = BuildFakeService(context);
-    var result = RunColumnEditorScreen(service, context, entity, null);
+    var services = BuildFakeServices(context);
+    var result = RunColumnEditorScreen(
+        services.Schema,
+        context,
+        entity,
+        null
+    );
     Console.WriteLine(result);
     return 0;
 }
@@ -214,8 +224,8 @@ if( mode == "column-editor" )
 if( mode == "column-editor-edit" )
 {
     var context = BuildWriteContext();
-    var service = BuildFakeService(context);
-    var existing = service
+    var services = BuildFakeServices(context);
+    var existing = services.Query
         .GetColumnsAsync(
             entity.LogicalName,
             entity.MetadataId,
@@ -225,7 +235,7 @@ if( mode == "column-editor-edit" )
         .GetResult()
         .First(column => column.CanModifyAdditionalSettings == true);
     var result = RunColumnEditorScreen(
-        service,
+        services.Schema,
         context,
         entity,
         existing
@@ -272,7 +282,7 @@ SolutionWriteContext BuildWriteContext()
     };
 }
 
-FakeDataverseService BuildFakeService(
+FakeDataverseServices BuildFakeServices(
     SolutionWriteContext context,
     TimeSpan? operationDelay = null
 )
@@ -326,8 +336,8 @@ FakeDataverseService BuildFakeService(
     {
         [entity.LogicalName] = entity.MetadataId
     };
-    return new FakeDataverseService(
-        context.EnvironmentUrl,
+    return new FakeDataverseServices(
+        context,
         columns,
         tableIds,
         operationDelay
@@ -335,12 +345,18 @@ FakeDataverseService BuildFakeService(
 }
 
 static string RunTableColumnsScreen(
-    DataverseService service,
+    IDataverseQueryService queryService,
+    IDataverseSchemaService schemaService,
     SolutionWriteContext context,
     DataverseEntity entity
 )
 {
-    var screen = new TableColumnsScreen(service, entity, context);
+    var screen = new TableColumnsScreen(
+        queryService,
+        schemaService,
+        entity,
+        context
+    );
     if( Console.IsInputRedirected || Console.IsOutputRedirected )
     {
         return "redirected";
@@ -380,11 +396,11 @@ static string RunTableColumnsScreen(
 }
 
 static string RunCreateTableScreen(
-    DataverseService service,
+    IDataverseSchemaService schemaService,
     SolutionWriteContext context
 )
 {
-    var screen = new CreateTableScreen(service, context);
+    var screen = new CreateTableScreen(schemaService, context);
     if( Console.IsInputRedirected || Console.IsOutputRedirected )
     {
         return "redirected";
@@ -421,14 +437,14 @@ static string RunCreateTableScreen(
 }
 
 static string RunColumnEditorScreen(
-    DataverseService service,
+    IDataverseSchemaService schemaService,
     SolutionWriteContext context,
     DataverseEntity entity,
     DataverseColumn? existing
 )
 {
     var screen = new ColumnEditorScreen(
-        service,
+        schemaService,
         context,
         entity.LogicalName,
         entity.MetadataId,

@@ -16,7 +16,7 @@ using AttributeMetadata = Microsoft.Xrm.Sdk.Metadata.AttributeMetadata;
 
 namespace dvtui.Services;
 
-public sealed class DataverseSchemaService
+public sealed class DataverseSchemaService : IDataverseSchemaService
 {
     private const int ComponentTypeAttribute = 2;
 
@@ -853,14 +853,15 @@ public sealed class DataverseSchemaService
     }
 
     public async Task DeleteColumnAsync(
-        string tableLogicalName,
-        string columnLogicalName,
-        Guid expectedMetadataId,
-        CancellationToken cancellationToken,
-        Guid tableMetadataId = default,
-        SolutionWriteContext? context = null
+        DeleteColumnRequest request,
+        CancellationToken cancellationToken
     )
     {
+        var tableLogicalName = request.TableLogicalName;
+        var columnLogicalName = request.ColumnLogicalName;
+        var expectedMetadataId = request.ExpectedMetadataId;
+        var tableMetadataId = request.TableMetadataId;
+        var context = request.Context;
         SessionLog.Info(
             "Schema.DeleteColumn",
             "Started table=" + tableLogicalName
@@ -934,13 +935,13 @@ public sealed class DataverseSchemaService
             );
         }
 
-        var request = new DeleteAttributeRequest
+        var deleteRequest = new DeleteAttributeRequest
         {
             EntityLogicalName = tableLogicalName,
             LogicalName = columnLogicalName
         };
 
-        await _client.ExecuteAsync(request, cancellationToken);
+        await _client.ExecuteAsync(deleteRequest, cancellationToken);
         try
         {
             await VerifyColumnDeletedAsync(
@@ -986,7 +987,7 @@ public sealed class DataverseSchemaService
                 cancellationToken
             );
         }
-        catch( Exception ex ) when( IsMetadataNotFound(ex) )
+        catch( Exception ex ) when( MetadataUtilities.IsMetadataNotFound(ex) )
         {
             return;
         }
@@ -1004,31 +1005,14 @@ public sealed class DataverseSchemaService
         );
     }
 
-    internal static bool IsMetadataNotFound(Exception exception)
-    {
-        for( var current = exception; current != null; current = current.InnerException )
-        {
-            var message = current.Message;
-            if( message.Contains("could not find", StringComparison.OrdinalIgnoreCase)
-                || message.Contains("not found", StringComparison.OrdinalIgnoreCase)
-                || message.Contains("does not exist", StringComparison.OrdinalIgnoreCase)
-                || message.Contains("doesn't exist", StringComparison.OrdinalIgnoreCase)
-                || message.Contains("cannot be found", StringComparison.OrdinalIgnoreCase) )
-            {
-                return true;
-            }
-        }
-
-        return false;
-    }
-
     public async Task PublishTableAsync(
-        string tableLogicalName,
-        CancellationToken cancellationToken,
-        SolutionWriteContext? context = null,
-        Guid tableMetadataId = default
+        PublishTableRequest request,
+        CancellationToken cancellationToken
     )
     {
+        var tableLogicalName = request.TableLogicalName;
+        var context = request.Context;
+        var tableMetadataId = request.TableMetadataId;
         SessionLog.Info(
             "Schema.PublishTable",
             "Started table=" + tableLogicalName
@@ -1054,12 +1038,12 @@ public sealed class DataverseSchemaService
         }
 
         var xml = SchemaMetadataFactory.BuildPublishXml(tableLogicalName);
-        var request = new PublishXmlRequest
+        var publishRequest = new PublishXmlRequest
         {
             ParameterXml = xml
         };
 
-        await _client.ExecuteAsync(request, cancellationToken);
+        await _client.ExecuteAsync(publishRequest, cancellationToken);
         SessionLog.Info(
             "Schema.PublishTable",
             "Completed table=" + tableLogicalName
@@ -1349,7 +1333,7 @@ public sealed class DataverseSchemaService
         {
             await _client.ExecuteAsync(request, cancellationToken);
         }
-        catch( Exception ex ) when( IsMetadataNotFound(ex) )
+        catch( Exception ex ) when( MetadataUtilities.IsMetadataNotFound(ex) )
         {
             return;
         }
@@ -1380,7 +1364,7 @@ public sealed class DataverseSchemaService
         {
             await _client.ExecuteAsync(request, cancellationToken);
         }
-        catch( Exception ex ) when( IsMetadataNotFound(ex) )
+        catch( Exception ex ) when( MetadataUtilities.IsMetadataNotFound(ex) )
         {
             return;
         }

@@ -1,8 +1,5 @@
 using dvtui.Models;
 
-using Microsoft.PowerPlatform.Dataverse.Client;
-using Microsoft.PowerPlatform.Dataverse.Client.Auth;
-using Microsoft.PowerPlatform.Dataverse.Client.Model;
 using Microsoft.Xrm.Sdk.Messages;
 using Microsoft.Xrm.Sdk.Query;
 using EntityFilters = Microsoft.Xrm.Sdk.Metadata.EntityFilters;
@@ -12,7 +9,7 @@ using EntityReference = Microsoft.Xrm.Sdk.EntityReference;
 
 namespace dvtui.Services;
 
-public class DataverseService : IDisposable
+public sealed class DataverseQueryService : IDataverseQueryService
 {
     private const int RecordPageSize = 5000;
 
@@ -37,90 +34,11 @@ public class DataverseService : IDisposable
         "rootcomponentbehavior"
     ];
 
-    private readonly ServiceClient _client;
     private readonly IDataverseExecutor _executor;
-    private readonly string _environmentUrl;
 
-    public DataverseService(string url)
+    public DataverseQueryService(IDataverseExecutor executor)
     {
-        url = url.Replace("http://", "").TrimEnd('/');
-        if( url.StartsWith("https://") == false )
-        {
-            url = "https://" + url;
-        }
-        _environmentUrl = url;
-
-        var options = new ConnectionOptions
-        {
-            AuthenticationType = AuthenticationType.OAuth,
-            ServiceUri = new Uri(url),
-            RedirectUri = new Uri("http://localhost"),
-            LoginPrompt = PromptBehavior.Auto,
-            SkipDiscovery = true
-        };
-
-        _client = new ServiceClient(options, deferConnection: true);
-        _executor = new LoggingDataverseExecutor(
-            new ServiceClientExecutor(_client)
-        );
-        SessionLog.Info(
-            "Dataverse.Client",
-            "Created deferred client for environment=" + _environmentUrl
-        );
-    }
-
-    public void Connect()
-    {
-        SessionLog.Info(
-            "Dataverse.Connect",
-            "Starting connection to environment=" + _environmentUrl
-        );
-        try
-        {
-            _client.Connect();
-
-            if( !_client.IsReady )
-            {
-                SessionLog.Warning(
-                    "Dataverse.Connect",
-                    "Client is not ready. lastError=" + _client.LastError
-                        + " lastException=" + _client.LastException
-                );
-                throw new InvalidOperationException(
-                    $"Connection failed: {_client.LastError}"
-                );
-            }
-
-            SessionLog.Info(
-                "Dataverse.Connect",
-                "Connection ready. isReady=" + _client.IsReady
-            );
-        }
-        catch( Exception ex )
-        {
-            SessionLog.Exception(
-                "Dataverse.Connect",
-                ex,
-                "Connection failed for environment=" + _environmentUrl
-                    + " lastError=" + _client.LastError
-                    + " lastException=" + _client.LastException
-            );
-            throw;
-        }
-    }
-
-    public string EnvironmentUrl => _environmentUrl;
-
-    public DataverseSchemaService CreateSchemaService()
-    {
-        SessionLog.Debug(
-            "Dataverse.Client",
-            "Creating schema service for environment=" + _environmentUrl
-        );
-        return new DataverseSchemaService(
-            _executor,
-            _environmentUrl
-        );
+        _executor = executor;
     }
 
     public async Task<List<DataverseSolution>> GetSolutionsAsync(
@@ -203,30 +121,22 @@ public class DataverseService : IDisposable
     }
 
     public async Task<DataverseEntityDetails> GetEntityAsync(
-        string logicalName,
+        string tableLogicalName,
         Guid metadataId,
         CancellationToken cancellationToken
     )
     {
         SessionLog.Info(
             "Dataverse.Operation",
-            "GetEntity started logicalName=" + logicalName
+            "GetEntity started logicalName=" + tableLogicalName
                 + " metadataId=" + metadataId
         );
-        if( string.IsNullOrWhiteSpace(logicalName) )
-        {
-            throw new ArgumentException("A table logical name is required.", nameof(logicalName));
-        }
-
-        if( metadataId == Guid.Empty )
-        {
-            throw new ArgumentException("A table metadata ID is required.", nameof(metadataId));
-        }
+        ValidateEntityIdentityInput(tableLogicalName, metadataId);
 
         var request = new RetrieveEntityRequest
         {
             EntityFilters = EntityFilters.Entity | EntityFilters.Attributes,
-            LogicalName = logicalName,
+            LogicalName = tableLogicalName,
             MetadataId = metadataId,
             RetrieveAsIfPublished = true
         };
@@ -236,38 +146,37 @@ public class DataverseService : IDisposable
             cancellationToken
         );
         var metadata = response.EntityMetadata;
-        VerifyEntityIdentity(metadata, logicalName, metadataId);
+        VerifyEntityIdentity(metadata, tableLogicalName, metadataId);
         var result = CreateEntityDetails(metadata);
         SessionLog.Info(
             "Dataverse.Operation",
-            "GetEntity completed logicalName=" + logicalName
+            "GetEntity completed logicalName=" + tableLogicalName
                 + " fields=" + result.Fields.Count
         );
         return result;
     }
 
-    public virtual async Task<DataverseEntityDetails>
-        GetEntityByLogicalNameAsync(
-            string logicalName,
-            CancellationToken cancellationToken
-        )
+    public async Task<DataverseEntityDetails> GetEntityByLogicalNameAsync(
+        string tableLogicalName,
+        CancellationToken cancellationToken
+    )
     {
         SessionLog.Info(
             "Dataverse.Operation",
-            "GetEntityByLogicalName started logicalName=" + logicalName
+            "GetEntityByLogicalName started logicalName=" + tableLogicalName
         );
-        if( string.IsNullOrWhiteSpace(logicalName) )
+        if( string.IsNullOrWhiteSpace(tableLogicalName) )
         {
             throw new ArgumentException(
                 "A table logical name is required.",
-                nameof(logicalName)
+                nameof(tableLogicalName)
             );
         }
 
         var request = new RetrieveEntityRequest
         {
             EntityFilters = EntityFilters.Entity | EntityFilters.Attributes,
-            LogicalName = logicalName,
+            LogicalName = tableLogicalName,
             RetrieveAsIfPublished = true
         };
         var response = (RetrieveEntityResponse)await _executor.ExecuteAsync(
@@ -277,43 +186,29 @@ public class DataverseService : IDisposable
         var result = CreateEntityDetails(response.EntityMetadata);
         SessionLog.Info(
             "Dataverse.Operation",
-            "GetEntityByLogicalName completed logicalName=" + logicalName
+            "GetEntityByLogicalName completed logicalName=" + tableLogicalName
                 + " fields=" + result.Fields.Count
         );
         return result;
     }
 
-    public virtual async Task<IReadOnlyList<DataverseColumn>> GetColumnsAsync(
-        string logicalName,
+    public async Task<IReadOnlyList<DataverseColumn>> GetColumnsAsync(
+        string tableLogicalName,
         Guid metadataId,
         CancellationToken cancellationToken
     )
     {
         SessionLog.Info(
             "Dataverse.Operation",
-            "GetColumns started logicalName=" + logicalName
+            "GetColumns started logicalName=" + tableLogicalName
                 + " metadataId=" + metadataId
         );
-        if( string.IsNullOrWhiteSpace(logicalName) )
-        {
-            throw new ArgumentException(
-                "A table logical name is required.",
-                nameof(logicalName)
-            );
-        }
-
-        if( metadataId == Guid.Empty )
-        {
-            throw new ArgumentException(
-                "A table metadata ID is required.",
-                nameof(metadataId)
-            );
-        }
+        ValidateEntityIdentityInput(tableLogicalName, metadataId);
 
         var request = new RetrieveEntityRequest
         {
             EntityFilters = EntityFilters.Entity | EntityFilters.Attributes,
-            LogicalName = logicalName,
+            LogicalName = tableLogicalName,
             MetadataId = metadataId,
             RetrieveAsIfPublished = true
         };
@@ -323,13 +218,14 @@ public class DataverseService : IDisposable
             cancellationToken
         );
         var metadata = response.EntityMetadata;
-        VerifyEntityIdentity(metadata, logicalName, metadataId);
+        VerifyEntityIdentity(metadata, tableLogicalName, metadataId);
         var columns = new List<DataverseColumn>();
         if( metadata.Attributes == null )
         {
             SessionLog.Info(
                 "Dataverse.Operation",
-                "GetColumns completed logicalName=" + logicalName + " count=0"
+                "GetColumns completed logicalName=" + tableLogicalName
+                    + " count=0"
             );
             return columns;
         }
@@ -344,158 +240,10 @@ public class DataverseService : IDisposable
             .ToList();
         SessionLog.Info(
             "Dataverse.Operation",
-            "GetColumns completed logicalName=" + logicalName
+            "GetColumns completed logicalName=" + tableLogicalName
                 + " count=" + result.Count
         );
         return result;
-    }
-
-    public virtual Task<Guid> CreateTableAsync(
-        CreateTableRequest request,
-        CancellationToken cancellationToken
-    )
-    {
-        SessionLog.Info(
-            "Dataverse.Operation",
-            "CreateTable requested solution=" + request.Context.SolutionUniqueName
-                + " schemaSuffix=" + request.SchemaSuffix
-        );
-        return CreateSchemaService().CreateTableAsync(
-            request,
-            cancellationToken
-        );
-    }
-
-    public virtual Task<Guid> CreateColumnAsync(
-        CreateColumnRequest request,
-        CancellationToken cancellationToken
-    )
-    {
-        SessionLog.Info(
-            "Dataverse.Operation",
-            "CreateColumn requested table=" + request.TableLogicalName
-                + " schemaSuffix=" + request.SchemaSuffix
-                + " kind=" + request.Kind
-        );
-        return CreateSchemaService().CreateColumnAsync(
-            request,
-            cancellationToken
-        );
-    }
-
-    public virtual Task<DataverseColumn> GetColumnDefinitionAsync(
-        string tableLogicalName,
-        string columnLogicalName,
-        bool retrieveAsIfPublished,
-        string baseLanguage,
-        CancellationToken cancellationToken
-    )
-    {
-        SessionLog.Info(
-            "Dataverse.Operation",
-            "GetColumnDefinition requested table=" + tableLogicalName
-                + " column=" + columnLogicalName
-                + " published=" + retrieveAsIfPublished
-        );
-        return CreateSchemaService().GetColumnDefinitionAsync(
-            tableLogicalName,
-            columnLogicalName,
-            retrieveAsIfPublished,
-            cancellationToken,
-            baseLanguage
-        );
-    }
-
-    public virtual Task<ColumnUpdateResult> UpdateColumnAsync(
-        UpdateColumnRequest request,
-        CancellationToken cancellationToken
-    )
-    {
-        SessionLog.Info(
-            "Dataverse.Operation",
-            "UpdateColumn requested table=" + request.TableLogicalName
-                + " column=" + request.ColumnLogicalName
-                + " expectedMetadataId=" + request.ExpectedMetadataId
-        );
-        return CreateSchemaService().UpdateColumnAsync(
-            request,
-            cancellationToken
-        );
-    }
-
-    public Task<IReadOnlyList<DependencyInfo>> GetColumnDeleteDependenciesAsync(
-        Guid columnMetadataId,
-        CancellationToken cancellationToken
-    )
-    {
-        SessionLog.Info(
-            "Dataverse.Operation",
-            "GetColumnDeleteDependencies requested metadataId=" + columnMetadataId
-        );
-        return CreateSchemaService().GetColumnDeleteDependenciesAsync(
-            columnMetadataId,
-            cancellationToken
-        );
-    }
-
-    public Task DeleteColumnAsync(
-        string tableLogicalName,
-        string columnLogicalName,
-        Guid expectedMetadataId,
-        CancellationToken cancellationToken,
-        Guid tableMetadataId = default,
-        SolutionWriteContext? context = null
-    )
-    {
-        SessionLog.Info(
-            "Dataverse.Operation",
-            "DeleteColumn requested table=" + tableLogicalName
-                + " column=" + columnLogicalName
-                + " expectedMetadataId=" + expectedMetadataId
-        );
-        return CreateSchemaService().DeleteColumnAsync(
-            tableLogicalName,
-            columnLogicalName,
-            expectedMetadataId,
-            cancellationToken,
-            tableMetadataId,
-            context
-        );
-    }
-
-    public Task PublishTableAsync(
-        string tableLogicalName,
-        CancellationToken cancellationToken,
-        SolutionWriteContext? context = null,
-        Guid tableMetadataId = default
-    )
-    {
-        SessionLog.Info(
-            "Dataverse.Operation",
-            "PublishTable requested table=" + tableLogicalName
-                + " metadataId=" + tableMetadataId
-        );
-        return CreateSchemaService().PublishTableAsync(
-            tableLogicalName,
-            cancellationToken,
-            context,
-            tableMetadataId
-        );
-    }
-
-    public Task DeleteTableAsync(
-        string tableLogicalName,
-        CancellationToken cancellationToken
-    )
-    {
-        SessionLog.Info(
-            "Dataverse.Operation",
-            "DeleteTable requested table=" + tableLogicalName
-        );
-        return CreateSchemaService().DeleteTableAsync(
-            tableLogicalName,
-            cancellationToken
-        );
     }
 
     private async Task<List<Entity>> RetrieveAllAsync(
@@ -522,6 +270,28 @@ public class DataverseService : IDisposable
         }
 
         return results;
+    }
+
+    private static void ValidateEntityIdentityInput(
+        string tableLogicalName,
+        Guid metadataId
+    )
+    {
+        if( string.IsNullOrWhiteSpace(tableLogicalName) )
+        {
+            throw new ArgumentException(
+                "A table logical name is required.",
+                nameof(tableLogicalName)
+            );
+        }
+
+        if( metadataId == Guid.Empty )
+        {
+            throw new ArgumentException(
+                "A table metadata ID is required.",
+                nameof(metadataId)
+            );
+        }
     }
 
     private static DataverseSolution CreateSolution(Entity entity)
@@ -586,7 +356,6 @@ public class DataverseService : IDisposable
             }
             else
             {
-                // Fallback: try to retrieve the entity directly by MetadataId
                 component.Entity = await TryRetrieveEntityByMetadataIdAsync(
                     objectId,
                     cancellationToken
@@ -699,14 +468,14 @@ public class DataverseService : IDisposable
 
     private static void VerifyEntityIdentity(
         EntityMetadata metadata,
-        string logicalName,
+        string tableLogicalName,
         Guid metadataId
     )
     {
         if( metadata.MetadataId != metadataId
             || !string.Equals(
                 metadata.LogicalName,
-                logicalName,
+                tableLogicalName,
                 StringComparison.OrdinalIgnoreCase
             ) )
         {
@@ -741,14 +510,5 @@ public class DataverseService : IDisposable
         return fields
             .OrderBy(field => field.SchemaName, StringComparer.Ordinal)
             .ToList();
-    }
-
-    public void Dispose()
-    {
-        SessionLog.Info(
-            "Dataverse.Client",
-            "Disposing client for environment=" + _environmentUrl
-        );
-        _client.Dispose();
     }
 }

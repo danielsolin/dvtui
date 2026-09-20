@@ -19,7 +19,8 @@ internal enum TableColumnsAction
 
 internal sealed class TableColumnsScreen
 {
-    private readonly DataverseService _service;
+    private readonly IDataverseQueryService _queryService;
+    private readonly IDataverseSchemaService _schemaService;
     private readonly DataverseEntity _entity;
     private readonly SolutionWriteContext _context;
     private bool _sessionPendingChanges;
@@ -40,13 +41,15 @@ internal sealed class TableColumnsScreen
     private int _revision;
 
     public TableColumnsScreen(
-        DataverseService service,
+        IDataverseQueryService queryService,
+        IDataverseSchemaService schemaService,
         DataverseEntity entity,
         SolutionWriteContext context,
         bool sessionPendingChanges = false
     )
     {
-        _service = service;
+        _queryService = queryService;
+        _schemaService = schemaService;
         _entity = entity;
         _context = context;
         _sessionPendingChanges = sessionPendingChanges;
@@ -261,7 +264,7 @@ internal sealed class TableColumnsScreen
             var columns = await Progress.Show(
                 "Loading columns...",
                 cancellationToken,
-                token => _service.GetColumnsAsync(
+                token => _queryService.GetColumnsAsync(
                     _entity.LogicalName,
                     _entity.MetadataId,
                     token
@@ -384,7 +387,7 @@ internal sealed class TableColumnsScreen
 
         _pendingColumn = _columns[_selectedIndex];
         _editor = new ColumnEditorScreen(
-            _service,
+            _schemaService,
             _context,
             _entity.LogicalName,
             _entity.MetadataId,

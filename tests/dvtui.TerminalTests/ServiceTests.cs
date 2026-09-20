@@ -1050,9 +1050,12 @@ internal static class ServiceTests
         try
         {
             service.DeleteColumnAsync(
-                "new_things",
-                "new_note",
-                metadataId,
+                new DeleteColumnRequest
+                {
+                    TableLogicalName = "new_things",
+                    ColumnLogicalName = "new_note",
+                    ExpectedMetadataId = metadataId
+                },
                 CancellationToken.None
             ).GetAwaiter().GetResult();
         }
@@ -1085,9 +1088,12 @@ internal static class ServiceTests
         try
         {
             service.DeleteColumnAsync(
-                "new_things",
-                "new_note",
-                expected,
+                new DeleteColumnRequest
+                {
+                    TableLogicalName = "new_things",
+                    ColumnLogicalName = "new_note",
+                    ExpectedMetadataId = expected
+                },
                 CancellationToken.None
             ).GetAwaiter().GetResult();
         }
@@ -1140,9 +1146,12 @@ internal static class ServiceTests
         try
         {
             service.DeleteColumnAsync(
-                "new_things",
-                "new_note",
-                metadataId,
+                new DeleteColumnRequest
+                {
+                    TableLogicalName = "new_things",
+                    ColumnLogicalName = "new_note",
+                    ExpectedMetadataId = metadataId
+                },
                 CancellationToken.None
             ).GetAwaiter().GetResult();
         }
@@ -1202,9 +1211,12 @@ internal static class ServiceTests
 
         var service = new DataverseSchemaService(fake);
         service.DeleteColumnAsync(
-            "new_things",
-            "new_note",
-            metadataId,
+            new DeleteColumnRequest
+            {
+                TableLogicalName = "new_things",
+                ColumnLogicalName = "new_note",
+                ExpectedMetadataId = metadataId
+            },
             CancellationToken.None
         ).GetAwaiter().GetResult();
 
@@ -1242,7 +1254,10 @@ internal static class ServiceTests
 
         var service = new DataverseSchemaService(fake);
         service.PublishTableAsync(
-            "new_things",
+            new PublishTableRequest
+            {
+                TableLogicalName = "new_things"
+            },
             CancellationToken.None
         ).GetAwaiter().GetResult();
 
