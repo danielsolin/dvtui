@@ -29,4 +29,4 @@ Do not make any code changes - only create or modify the report itself.
 
 Save the report to:
 
-`docs/reports/task-code-cleanup-YYYYMMDD.md`
+`docs/tasks/reports/task-code-cleanup-YYYYMMDD.md`
