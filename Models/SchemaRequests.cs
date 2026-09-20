@@ -10,7 +10,7 @@ public sealed class CreateTableRequest
     public bool IsUserOwned { get; init; }
     public string PrimaryNameDisplayName { get; init; } = string.Empty;
     public string PrimaryNameSchemaSuffix { get; init; } = string.Empty;
-    public int PrimaryNameMaxLength { get; init; } = ColumnDefaults.PrimaryNameLength;
+    public int PrimaryNameMaxLength { get; init; } = ColumnDefaults.PrimaryNameDefaultLength;
 }
 
 public sealed class CreateColumnRequest

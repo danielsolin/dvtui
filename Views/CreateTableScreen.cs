@@ -18,7 +18,7 @@ internal sealed class CreateTableScreen : IFormScreen
     private string _description = string.Empty;
     private string _primaryNameDisplay = "Name";
     private string _primaryNameSuffix = "name";
-    private string _primaryNameLength = ColumnDefaults.PrimaryNameLength
+    private string _primaryNameLength = ColumnDefaults.PrimaryNameDefaultLength
         .ToString(CultureInfo.InvariantCulture);
     private bool _isUserOwned;
     private int _activeField;
@@ -45,15 +45,6 @@ internal sealed class CreateTableScreen : IFormScreen
     public string ProgressMessage => "Creating table...";
     public string Status => _status;
     public int Revision => Volatile.Read(ref _revision);
-
-    public void RequestCancellation()
-    {
-        if( _submitting )
-        {
-            _status = "Cancelling...";
-            Touch();
-        }
-    }
 
     public void ResetForRetry()
     {
@@ -256,12 +247,18 @@ internal sealed class CreateTableScreen : IFormScreen
         AddRow(
             table,
             "Predicted logical name",
-            BuildPredictedName(_schemaSuffix)
+            FormViewHelpers.BuildPredictedName(
+                _context.PublisherPrefix,
+                _schemaSuffix
+            )
         );
         AddRow(
             table,
             "Predicted primary name",
-            BuildPredictedName(_primaryNameSuffix)
+            FormViewHelpers.BuildPredictedName(
+                _context.PublisherPrefix,
+                _primaryNameSuffix
+            )
         );
 
         var fields = BuildFields();
@@ -271,11 +268,14 @@ internal sealed class CreateTableScreen : IFormScreen
             var field = fields[index];
             var marker = index == _activeField ? "> " : "  ";
             var style = index == _activeField
-                ? Style.Parse("cyan")
+                ? TuiColors.ActiveField
                 : Style.Plain;
             table.AddRow(
                 new Text(marker + field.Label, style),
-                new Text(DisplayValue(field.Read()))
+                new Text(
+                    FormViewHelpers.DisplayValue(field.Read()),
+                    style
+                )
             );
         }
 
@@ -286,13 +286,19 @@ internal sealed class CreateTableScreen : IFormScreen
         panel.Height = height - 4;
 
         var hint = new Text(
-            "  Tab: next  Shift+Tab: previous  Ctrl+S: create  Esc: back",
-            Style.Parse("dim")
+            "  Tab: next  Shift+Tab: previous  Ctrl+S: create  Esc: back"
         );
         return new Layout()
             .SplitRows(
                 new Layout().Update(panel),
-                new Layout().Size(1).Update(RenderStatus(width)),
+                new Layout().Size(1).Update(
+                    FormViewHelpers.RenderStatus(
+                        width,
+                        _status,
+                        _hasError,
+                        _submitting
+                    )
+                ),
                 new Layout().Size(1).Update(hint)
             );
     }
@@ -305,46 +311,46 @@ internal sealed class CreateTableScreen : IFormScreen
         Touch();
     }
 
-    private List<TableEditorField> BuildFields()
+    private List<FormField> BuildFields()
     {
         return
         [
-            new TableEditorField(
+            new FormField(
                 "Display name",
                 () => _displayName,
                 value => _displayName = value
             ),
-            new TableEditorField(
+            new FormField(
                 "Plural display name",
                 () => _pluralDisplayName,
                 value => _pluralDisplayName = value
             ),
-            new TableEditorField(
+            new FormField(
                 "Schema suffix",
                 () => _schemaSuffix,
                 value => _schemaSuffix = value
             ),
-            new TableEditorField(
+            new FormField(
                 "Description",
                 () => _description,
                 value => _description = value
             ),
-            new TableEditorField(
+            new FormField(
                 "Primary name display",
                 () => _primaryNameDisplay,
                 value => _primaryNameDisplay = value
             ),
-            new TableEditorField(
+            new FormField(
                 "Primary name suffix",
                 () => _primaryNameSuffix,
                 value => _primaryNameSuffix = value
             ),
-            new TableEditorField(
+            new FormField(
                 "Primary name max length",
                 () => _primaryNameLength,
                 value => _primaryNameLength = value
             ),
-            new TableEditorField(
+            new FormField(
                 "Ownership",
                 () => _isUserOwned ? "User/team-owned" : "Organization-owned",
                 _ => { },
@@ -360,9 +366,9 @@ internal sealed class CreateTableScreen : IFormScreen
             return "Display name is required.";
         }
 
-        if( _displayName.Length > ColumnDefaults.DisplayLengthMax )
+        if( _displayName.Length > ColumnDefaults.DisplayNameAllowedMaxLength )
         {
-            return $"Display name must be {ColumnDefaults.DisplayLengthMax} "
+            return $"Display name must be {ColumnDefaults.DisplayNameAllowedMaxLength} "
                 + "characters or fewer.";
         }
 
@@ -371,20 +377,25 @@ internal sealed class CreateTableScreen : IFormScreen
             _pluralDisplayName = _displayName + "s";
         }
 
-        if( _pluralDisplayName.Length > ColumnDefaults.DisplayLengthMax )
+        if( _pluralDisplayName.Length > ColumnDefaults.DisplayNameAllowedMaxLength )
         {
-            return $"Plural display name must be {ColumnDefaults.DisplayLengthMax} "
+            return $"Plural display name must be "
+                + $"{ColumnDefaults.DisplayNameAllowedMaxLength} "
                 + "characters or fewer.";
         }
 
         if( string.IsNullOrWhiteSpace(_schemaSuffix) )
         {
-            _schemaSuffix = ToSchemaSuffix(_displayName);
+            _schemaSuffix = FormViewHelpers.ToSchemaSuffix(
+                _displayName,
+                "table"
+            );
         }
 
-        if( _schemaSuffix.Length > ColumnDefaults.SchemaNameLengthMax )
+        if( _schemaSuffix.Length > ColumnDefaults.SchemaNameAllowedMaxLength )
         {
-            return $"Schema suffix must be {ColumnDefaults.SchemaNameLengthMax} "
+            return $"Schema suffix must be "
+                + $"{ColumnDefaults.SchemaNameAllowedMaxLength} "
                 + "characters or fewer.";
         }
 
@@ -393,16 +404,18 @@ internal sealed class CreateTableScreen : IFormScreen
             _primaryNameSuffix = "name";
         }
 
-        if( _primaryNameDisplay.Length > ColumnDefaults.DisplayLengthMax
+        if( _primaryNameDisplay.Length > ColumnDefaults.DisplayNameAllowedMaxLength
             || string.IsNullOrWhiteSpace(_primaryNameDisplay) )
         {
-            return $"Primary name display must be 1-{ColumnDefaults.DisplayLengthMax} "
+            return $"Primary name display must be "
+                + $"1-{ColumnDefaults.DisplayNameAllowedMaxLength} "
                 + "characters.";
         }
 
-        if( _description.Length > ColumnDefaults.DescriptionLengthMax )
+        if( _description.Length > ColumnDefaults.DescriptionAllowedMaxLength )
         {
-            return $"Description must be {ColumnDefaults.DescriptionLengthMax} "
+            return $"Description must be "
+                + $"{ColumnDefaults.DescriptionAllowedMaxLength} "
                 + "characters or fewer.";
         }
 
@@ -413,52 +426,13 @@ internal sealed class CreateTableScreen : IFormScreen
             out var primaryLength
         )
             || primaryLength < 1
-            || primaryLength > ColumnDefaults.TextMaxLength )
+            || primaryLength > ColumnDefaults.TextAllowedMaxLength )
         {
             return "Primary name length must be between 1 and "
-                + ColumnDefaults.TextMaxLength + ".";
+                + ColumnDefaults.TextAllowedMaxLength + ".";
         }
 
         return null;
-    }
-
-    private static string ToSchemaSuffix(string displayName)
-    {
-        var chars = displayName
-            .Where(char.IsLetterOrDigit)
-            .ToArray();
-        var suffix = new string(chars);
-        if( suffix.Length == 0 )
-        {
-            return "table";
-        }
-
-        return char.ToLowerInvariant(suffix[0]) + suffix[1..];
-    }
-
-    private string BuildPredictedName(string suffix)
-    {
-        if( string.IsNullOrWhiteSpace(suffix) )
-        {
-            return "—";
-        }
-
-        return _context.PublisherPrefix + "_" + suffix;
-    }
-
-    private static string DisplayValue(string value)
-    {
-        return string.IsNullOrEmpty(value) ? "—" : value;
-    }
-
-    private IRenderable RenderStatus(int width)
-    {
-        var style = _hasError
-            ? Style.Parse("red")
-            : _submitting
-                ? Style.Parse("yellow")
-                : Style.Parse("green");
-        return Progress.RenderStatus(width, "  " + _status, style);
     }
 
     private static void AddRow(
@@ -469,7 +443,7 @@ internal sealed class CreateTableScreen : IFormScreen
     {
         table.AddRow(
             new Text(label, TuiColors.SecondaryText),
-            new Text(DisplayValue(value))
+            new Text(FormViewHelpers.DisplayValue(value))
         );
     }
 
@@ -478,24 +452,4 @@ internal sealed class CreateTableScreen : IFormScreen
         Interlocked.Increment(ref _revision);
     }
 
-    private sealed class TableEditorField
-    {
-        public TableEditorField(
-            string label,
-            Func<string> read,
-            Action<string> write,
-            bool choice = false
-        )
-        {
-            Label = label;
-            Read = read;
-            Write = write;
-            Choice = choice;
-        }
-
-        public string Label { get; }
-        public Func<string> Read { get; }
-        public Action<string> Write { get; }
-        public bool Choice { get; }
-    }
 }

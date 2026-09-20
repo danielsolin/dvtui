@@ -118,13 +118,19 @@ internal static class Progress
     public static IRenderable RenderStatus(
         int width,
         string idleMessage,
-        Style idleStyle
+        Style idleStyle,
+        bool showActiveMessage = true
     )
     {
         var current = Volatile.Read(ref _current);
         if( current == null )
         {
             return new Text(idleMessage, idleStyle);
+        }
+
+        if( !showActiveMessage )
+        {
+            return new Markup(RenderPulse(width, current));
         }
 
         var messageWidth = Math.Min(

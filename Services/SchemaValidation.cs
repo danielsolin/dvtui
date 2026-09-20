@@ -7,15 +7,15 @@ namespace dvtui.Services;
 internal static class SchemaValidation
 {
     private const int MinTextLength = 1;
-    private const int MaxTextLength = ColumnDefaults.TextMaxLength;
+    private const int MaxTextLength = ColumnDefaults.TextAllowedMaxLength;
     private const int MinMemoLength = 1;
-    private const int MaxMemoLength = ColumnDefaults.MultilineMaxLength;
+    private const int MaxMemoLength = ColumnDefaults.MultilineAllowedMaxLength;
     private const int MinPrecision = 0;
     private const int MaxPrecision = DecimalAttributeMetadata.MaxSupportedPrecision;
-    private const int IntMin = ColumnDefaults.WholeNumberLowerBound;
-    private const int IntMax = ColumnDefaults.WholeNumberUpperBound;
-    private const decimal DecMin = ColumnDefaults.DecimalLowerBound;
-    private const decimal DecMax = ColumnDefaults.DecimalUpperBound;
+    private const int IntMin = ColumnDefaults.WholeNumberAllowedMin;
+    private const int IntMax = ColumnDefaults.WholeNumberAllowedMax;
+    private const decimal DecMin = ColumnDefaults.DecimalAllowedMin;
+    private const decimal DecMax = ColumnDefaults.DecimalAllowedMax;
 
     public static void ValidateTableCreation(CreateTableRequest request)
     {
@@ -33,7 +33,7 @@ internal static class SchemaValidation
             "Primary name length"
         );
         if( request.Description != null
-            && request.Description.Length > ColumnDefaults.DescriptionLengthMax )
+            && request.Description.Length > ColumnDefaults.DescriptionAllowedMaxLength )
         {
             throw new InvalidOperationException(
                 "Description is too long."
@@ -55,7 +55,7 @@ internal static class SchemaValidation
         ValidateSchemaSuffix(request.SchemaSuffix);
         ValidateRequirementLevel(request.RequirementLevel);
         if( request.Description != null
-            && request.Description.Length > ColumnDefaults.DescriptionLengthMax )
+            && request.Description.Length > ColumnDefaults.DescriptionAllowedMaxLength )
         {
             throw new InvalidOperationException(
                 "Description is too long."
@@ -121,7 +121,7 @@ internal static class SchemaValidation
         }
 
         if( request.SetDescription
-            && request.Description.Length > ColumnDefaults.DescriptionLengthMax )
+            && request.Description.Length > ColumnDefaults.DescriptionAllowedMaxLength )
         {
             throw new InvalidOperationException(
                 "Description is too long."
@@ -184,7 +184,7 @@ internal static class SchemaValidation
             );
         }
 
-        if( value.Length > ColumnDefaults.DisplayLengthMax )
+        if( value.Length > ColumnDefaults.DisplayNameAllowedMaxLength )
         {
             throw new InvalidOperationException(
                 $"{field} is too long."
@@ -221,7 +221,7 @@ internal static class SchemaValidation
             );
         }
 
-        if( suffix.Length > ColumnDefaults.SchemaNameLengthMax )
+        if( suffix.Length > ColumnDefaults.SchemaNameAllowedMaxLength )
         {
             throw new InvalidOperationException(
                 "Schema suffix is too long."

@@ -2,22 +2,22 @@ namespace dvtui.Models;
 
 public static class ColumnDefaults
 {
-    public const int TextLength = 100;
-    public const int MultilineLength = 2000;
-    public const int TextMaxLength = 4000;
-    public const int MultilineMaxLength = 1048576;
-    public const int WholeNumberLowerBound = int.MinValue;
-    public const int WholeNumberUpperBound = int.MaxValue;
-    public const int WholeNumberMin = 0;
-    public const int WholeNumberMax = int.MaxValue;
-    public const decimal DecimalLowerBound = -100000000000m;
-    public const decimal DecimalUpperBound = 100000000000m;
-    public const decimal DecimalMin = 0;
-    public const decimal DecimalMax = 100000000000m;
-    public const int DecimalPrecision = 2;
-    public const int DecimalMaxPrecision = 10;
-    public const int PrimaryNameLength = 100;
-    public const int DisplayLengthMax = 125;
-    public const int DescriptionLengthMax = 4000;
-    public const int SchemaNameLengthMax = 80;
+    public const int TextDefaultLength = 100;
+    public const int MultilineDefaultLength = 2000;
+    public const int TextAllowedMaxLength = 4000;
+    public const int MultilineAllowedMaxLength = 1048576;
+    public const int WholeNumberAllowedMin = int.MinValue;
+    public const int WholeNumberAllowedMax = int.MaxValue;
+    public const int WholeNumberDefaultMin = 0;
+    public const int WholeNumberDefaultMax = int.MaxValue;
+    public const decimal DecimalAllowedMin = -100000000000m;
+    public const decimal DecimalAllowedMax = 100000000000m;
+    public const decimal DecimalDefaultMin = 0;
+    public const decimal DecimalDefaultMax = 100000000000m;
+    public const int DecimalDefaultPrecision = 2;
+    public const int DecimalAllowedMaxPrecision = 10;
+    public const int PrimaryNameDefaultLength = 100;
+    public const int DisplayNameAllowedMaxLength = 125;
+    public const int DescriptionAllowedMaxLength = 4000;
+    public const int SchemaNameAllowedMaxLength = 80;
 }

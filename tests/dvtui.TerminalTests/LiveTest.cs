@@ -141,7 +141,7 @@ internal static class LiveTest
                     IsUserOwned = false,
                     PrimaryNameDisplayName = "Name",
                     PrimaryNameSchemaSuffix = "name",
-                    PrimaryNameMaxLength = ColumnDefaults.PrimaryNameLength
+                    PrimaryNameMaxLength = ColumnDefaults.PrimaryNameDefaultLength
                 },
                 CancellationToken.None
             ).GetAwaiter().GetResult();
@@ -164,7 +164,7 @@ internal static class LiveTest
                     SchemaSuffix = columnSuffix,
                     Description = "dvtui live text " + runMarker,
                     Kind = ColumnKind.Text,
-                    MaxLength = ColumnDefaults.TextLength,
+                    MaxLength = ColumnDefaults.TextDefaultLength,
                     MinValue = null,
                     MaxValue = null,
                     Precision = null,
@@ -179,7 +179,7 @@ internal static class LiveTest
             );
             Console.WriteLine("Created column: " + columnId);
 
-            var fresh = schema.LoadColumnDefinitionAsync(
+            var fresh = schema.GetColumnDefinitionAsync(
                 tableLogicalName,
                 columnLogicalName,
                 retrieveAsIfPublished: true,
@@ -191,7 +191,7 @@ internal static class LiveTest
                     columnLogicalName,
                     StringComparison.OrdinalIgnoreCase
                 )
-                || fresh.MaxLength != ColumnDefaults.TextLength )
+                || fresh.MaxLength != ColumnDefaults.TextDefaultLength )
             {
                 throw new InvalidOperationException(
                     "Column readback did not match the created identity."
@@ -244,7 +244,7 @@ internal static class LiveTest
                 );
             }
 
-            var unpublishedRequirement = schema.LoadColumnDefinitionAsync(
+            var unpublishedRequirement = schema.GetColumnDefinitionAsync(
                 tableLogicalName,
                 columnLogicalName,
                 retrieveAsIfPublished: true,
@@ -290,7 +290,7 @@ internal static class LiveTest
             ).GetAwaiter().GetResult();
             Console.WriteLine("Published table.");
 
-            var published = schema.LoadColumnDefinitionAsync(
+            var published = schema.GetColumnDefinitionAsync(
                 tableLogicalName,
                 columnLogicalName,
                 retrieveAsIfPublished: true,
@@ -423,7 +423,7 @@ internal static class LiveTest
             ledger.Remove("column");
             Console.WriteLine("Cleaned up column: " + columnLogicalName);
         }
-        catch( Exception ex ) when( IsMetadataNotFound(ex) )
+        catch( Exception ex ) when( DataverseSchemaService.IsMetadataNotFound(ex) )
         {
             ledger.Remove("column");
             Console.WriteLine("Column already absent: " + columnLogicalName);
@@ -466,7 +466,7 @@ internal static class LiveTest
                     cancellation.Token
                 ).GetAwaiter().GetResult();
             }
-            catch( Exception ex ) when( IsMetadataNotFound(ex) )
+            catch( Exception ex ) when( DataverseSchemaService.IsMetadataNotFound(ex) )
             {
                 entity = service.GetEntityByLogicalNameAsync(
                     tableLogicalName,
@@ -487,7 +487,6 @@ internal static class LiveTest
 
             service.DeleteTableAsync(
                 tableLogicalName,
-                tableId,
                 cancellation.Token
             ).GetAwaiter().GetResult();
             VerifyTableAbsent(service, tableLogicalName, tableId, cancellation.Token);
@@ -496,7 +495,7 @@ internal static class LiveTest
         }
         catch( Exception ex )
         {
-            if( IsMetadataNotFound(ex) )
+            if( DataverseSchemaService.IsMetadataNotFound(ex) )
             {
                 ledger.Remove("table");
                 Console.WriteLine("Table already absent: " + tableLogicalName);
@@ -528,7 +527,7 @@ internal static class LiveTest
                 cancellationToken
             ).GetAwaiter().GetResult();
         }
-        catch( Exception ex ) when( IsMetadataNotFound(ex) )
+        catch( Exception ex ) when( DataverseSchemaService.IsMetadataNotFound(ex) )
         {
             return;
         }
@@ -536,34 +535,6 @@ internal static class LiveTest
         throw new InvalidOperationException(
             "Table cleanup was sent, but the table is still present."
         );
-    }
-
-    private static bool IsMetadataNotFound(Exception exception)
-    {
-        for( var current = exception; current != null; current = current.InnerException )
-        {
-            if( current.Message.Contains(
-                "could not find",
-                StringComparison.OrdinalIgnoreCase
-            )
-                || current.Message.Contains(
-                "not found",
-                StringComparison.OrdinalIgnoreCase
-            )
-                || current.Message.Contains(
-                    "does not exist",
-                    StringComparison.OrdinalIgnoreCase
-                )
-                || current.Message.Contains(
-                    "cannot be found",
-                    StringComparison.OrdinalIgnoreCase
-                ) )
-            {
-                return true;
-            }
-        }
-
-        return false;
     }
 
     private static string BuildName(string prefix, string suffix)

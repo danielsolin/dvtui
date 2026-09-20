@@ -5,10 +5,8 @@ using Microsoft.PowerPlatform.Dataverse.Client.Auth;
 using Microsoft.PowerPlatform.Dataverse.Client.Model;
 using Microsoft.Xrm.Sdk.Messages;
 using Microsoft.Xrm.Sdk.Query;
-using Label = Microsoft.Xrm.Sdk.Label;
 using EntityFilters = Microsoft.Xrm.Sdk.Metadata.EntityFilters;
 using EntityMetadata = Microsoft.Xrm.Sdk.Metadata.EntityMetadata;
-using AttributeMetadata = Microsoft.Xrm.Sdk.Metadata.AttributeMetadata;
 using Entity = Microsoft.Xrm.Sdk.Entity;
 using EntityReference = Microsoft.Xrm.Sdk.EntityReference;
 
@@ -338,7 +336,7 @@ public class DataverseService : IDisposable
 
         foreach( var attribute in metadata.Attributes )
         {
-            columns.Add(CreateColumn(attribute));
+            columns.Add(SchemaMetadataFactory.CreateColumn(attribute));
         }
 
         var result = columns
@@ -399,7 +397,7 @@ public class DataverseService : IDisposable
                 + " column=" + columnLogicalName
                 + " published=" + retrieveAsIfPublished
         );
-        return CreateSchemaService().LoadColumnDefinitionAsync(
+        return CreateSchemaService().GetColumnDefinitionAsync(
             tableLogicalName,
             columnLogicalName,
             retrieveAsIfPublished,
@@ -487,18 +485,15 @@ public class DataverseService : IDisposable
 
     public Task DeleteTableAsync(
         string tableLogicalName,
-        Guid tableMetadataId,
         CancellationToken cancellationToken
     )
     {
         SessionLog.Info(
             "Dataverse.Operation",
             "DeleteTable requested table=" + tableLogicalName
-                + " metadataId=" + tableMetadataId
         );
         return CreateSchemaService().DeleteTableAsync(
             tableLogicalName,
-            tableMetadataId,
             cancellationToken
         );
     }
@@ -673,9 +668,11 @@ public class DataverseService : IDisposable
             MetadataId = metadata.MetadataId ?? Guid.Empty,
             LogicalName = metadata.LogicalName ?? string.Empty,
             SchemaName = metadata.SchemaName ?? string.Empty,
-            DisplayName = GetLabel(metadata.DisplayName),
-            CollectionName = GetLabel(metadata.DisplayCollectionName),
-            Description = GetLabel(metadata.Description),
+            DisplayName = SchemaMetadataFactory.GetLabel(metadata.DisplayName),
+            CollectionName = SchemaMetadataFactory.GetLabel(
+                metadata.DisplayCollectionName
+            ),
+            Description = SchemaMetadataFactory.GetLabel(metadata.Description),
             EntitySetName = metadata.EntitySetName ?? string.Empty,
             PrimaryIdAttribute = metadata.PrimaryIdAttribute ?? string.Empty,
             PrimaryNameAttribute = metadata.PrimaryNameAttribute ?? string.Empty,
@@ -735,27 +732,15 @@ public class DataverseService : IDisposable
             {
                 LogicalName = attribute.LogicalName ?? string.Empty,
                 SchemaName = attribute.SchemaName ?? string.Empty,
-                DisplayName = GetLabel(attribute.DisplayName),
+                DisplayName = SchemaMetadataFactory.GetLabel(attribute.DisplayName),
                 Type = attribute.AttributeType?.ToString() ?? string.Empty,
-                Description = GetLabel(attribute.Description)
+                Description = SchemaMetadataFactory.GetLabel(attribute.Description)
             });
         }
 
         return fields
             .OrderBy(field => field.SchemaName, StringComparer.Ordinal)
             .ToList();
-    }
-
-    private static string GetLabel(Label? label)
-    {
-        return label?.UserLocalizedLabel?.Label
-            ?? label?.LocalizedLabels.FirstOrDefault()?.Label
-            ?? string.Empty;
-    }
-
-    private static DataverseColumn CreateColumn(AttributeMetadata metadata)
-    {
-        return DataverseSchemaService.CreateColumn(metadata);
     }
 
     public void Dispose()

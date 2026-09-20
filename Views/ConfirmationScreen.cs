@@ -129,7 +129,7 @@ internal sealed class ConfirmationScreen
             .SplitRows(
                 new Layout().Update(panel),
                 new Layout().Size(1).Update(
-                    new Text("  Enter: confirm  Esc: cancel", Style.Parse("dim"))
+                    new Text("  Enter: confirm  Esc: cancel")
                 )
             );
     }

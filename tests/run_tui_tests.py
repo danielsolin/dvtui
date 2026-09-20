@@ -469,6 +469,8 @@ def test_table_columns_edits_in_detail_pane():
         assert "Field" in data
         assert "Display name" in data
         assert "Ctrl+S: save" in data
+        press_key(master_fd, "r")
+        data += read_until(master_fd, "Customr")
         press_key(master_fd, "\x13")
         final = drain_until_exit(master_fd, process)
         assert "savecolumn:new_custom" in final

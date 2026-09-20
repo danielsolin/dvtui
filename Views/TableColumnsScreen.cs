@@ -553,8 +553,7 @@ internal sealed class TableColumnsScreen
         if( _columns.Count == 0 )
         {
             return new Text(
-                "  No columns. Press N to create one.",
-                Style.Parse("dim")
+                "  No columns. Press N to create one."
             );
         }
 
@@ -705,8 +704,7 @@ internal sealed class TableColumnsScreen
         if( _editor != null )
         {
             return new Text(
-                "  Tab: next  Shift+Tab: previous  Ctrl+S: save  Esc: list",
-                Style.Parse("dim")
+                "  Tab: next  Shift+Tab: previous  Ctrl+S: save  Esc: list"
             );
         }
 
@@ -716,8 +714,7 @@ internal sealed class TableColumnsScreen
         return new Text(
             "  Green: editable  Orange/red: read-only  " + writeHint
                 + "  R: Refresh  "
-            + "Tab: Details  Esc: list/back",
-            Style.Parse("dim")
+            + "Tab: Details  Esc: list/back"
         );
     }
 

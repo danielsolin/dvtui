@@ -20,16 +20,16 @@ internal sealed class ColumnEditorScreen : IFormScreen
     private string _schemaSuffix = string.Empty;
     private string _description = string.Empty;
     private ColumnKind _kind = ColumnKind.Text;
-    private string _maxLength = ColumnDefaults.TextLength.ToString(
+    private string _maxLength = ColumnDefaults.TextDefaultLength.ToString(
         CultureInfo.InvariantCulture
     );
-    private string _minValue = ColumnDefaults.WholeNumberMin.ToString(
+    private string _minValue = ColumnDefaults.WholeNumberDefaultMin.ToString(
         CultureInfo.InvariantCulture
     );
-    private string _maxValue = ColumnDefaults.WholeNumberMax.ToString(
+    private string _maxValue = ColumnDefaults.WholeNumberDefaultMax.ToString(
         CultureInfo.InvariantCulture
     );
-    private string _precision = ColumnDefaults.DecimalPrecision.ToString(
+    private string _precision = ColumnDefaults.DecimalDefaultPrecision.ToString(
         CultureInfo.InvariantCulture
     );
     private string _requirement = RequirementLevels.Optional;
@@ -100,15 +100,6 @@ internal sealed class ColumnEditorScreen : IFormScreen
     public bool MutationSucceeded => _mutationSucceeded;
     public int Revision => Volatile.Read(ref _revision);
 
-    public void RequestCancellation()
-    {
-        if( _submitting )
-        {
-            _status = "Cancelling...";
-            Touch();
-        }
-    }
-
     public void ResetForRetry()
     {
         _pendingAction = FormAction.None;
@@ -165,18 +156,18 @@ internal sealed class ColumnEditorScreen : IFormScreen
         }
 
         var field = fields[_activeField];
-        if( field.Choice != EditorChoice.None )
+        if( field.Choice )
         {
             if( key.Key == ConsoleKey.UpArrow
                 || key.Key == ConsoleKey.LeftArrow
                 || key.KeyChar == ' ' )
             {
-                ChangeChoice(field.Choice, -1);
+                field.ChangeChoice?.Invoke(-1);
             }
             else if( key.Key == ConsoleKey.DownArrow
                 || key.Key == ConsoleKey.RightArrow )
             {
-                ChangeChoice(field.Choice, 1);
+                field.ChangeChoice?.Invoke(1);
             }
 
             return;
@@ -197,7 +188,10 @@ internal sealed class ColumnEditorScreen : IFormScreen
         }
 
         if( char.IsControl(key.KeyChar)
-            || !IsAllowedCharacter(field.InputKind, key.KeyChar) )
+            || !ColumnEditorValidator.IsAllowedCharacter(
+                field.InputKind,
+                key.KeyChar
+            ) )
         {
             return;
         }
@@ -284,10 +278,14 @@ internal sealed class ColumnEditorScreen : IFormScreen
             .Expand();
         panel.Height = height - 4;
 
-        var status = RenderStatus(width);
+        var status = FormViewHelpers.RenderStatus(
+            width,
+            _status,
+            _hasError,
+            _submitting
+        );
         var hint = new Text(
-            "  Tab: next  Shift+Tab: previous  Ctrl+S: save  Esc: back",
-            Style.Parse("dim")
+            "  Tab: next  Shift+Tab: previous  Ctrl+S: save  Esc: back"
         );
 
         return new Layout()
@@ -311,7 +309,10 @@ internal sealed class ColumnEditorScreen : IFormScreen
             AddRow(
                 table,
                 "Predicted logical name",
-                BuildPredictedName(_schemaSuffix)
+                FormViewHelpers.BuildPredictedName(
+                    _context.PublisherPrefix,
+                    _schemaSuffix
+                )
             );
         }
         if( _isEdit && _existing != null )
@@ -329,11 +330,14 @@ internal sealed class ColumnEditorScreen : IFormScreen
             var field = fields[index];
             var marker = index == _activeField ? "> " : "  ";
             var style = index == _activeField
-                ? Style.Parse("cyan")
+                ? TuiColors.ActiveField
                 : Style.Plain;
             table.AddRow(
                 new Text(marker + field.Label, style),
-                new Text(DisplayValue(field.Read()))
+                new Text(
+                    FormViewHelpers.DisplayValue(field.Read()),
+                    style
+                )
             );
         }
 
@@ -348,56 +352,53 @@ internal sealed class ColumnEditorScreen : IFormScreen
         Touch();
     }
 
-    private List<EditorField> BuildFields()
+    private List<FormField> BuildFields()
     {
-        var fields = new List<EditorField>
+        var fields = new List<FormField>
         {
-            new(
+            new FormField(
                 "Display name",
-                EditorInputKind.Text,
-                EditorChoice.None,
                 () => _displayName,
-                value => _displayName = value
+                value => _displayName = value,
+                inputKind: FormInputKind.Text
             )
         };
         if( !_isEdit )
         {
-            fields.Add(new EditorField(
+            fields.Add(new FormField(
                 "Schema suffix",
-                EditorInputKind.Text,
-                EditorChoice.None,
                 () => _schemaSuffix,
-                value => _schemaSuffix = value
+                value => _schemaSuffix = value,
+                inputKind: FormInputKind.Text
             ));
         }
 
-        fields.Add(new EditorField(
+        fields.Add(new FormField(
             "Description",
-            EditorInputKind.Text,
-            EditorChoice.None,
             () => _description,
-            value => _description = value
+            value => _description = value,
+            inputKind: FormInputKind.Text
         ));
 
         if( !_isEdit )
         {
-            fields.Add(new EditorField(
+            fields.Add(new FormField(
                 "Type",
-                EditorInputKind.Choice,
-                EditorChoice.ColumnKind,
                 () => GetKindText(_kind),
-                _ => { }
+                _ => { },
+                inputKind: FormInputKind.Choice,
+                choice: true,
+                changeChoice: ChangeKind
             ));
         }
 
         if( _kind == ColumnKind.Text || _kind == ColumnKind.MultilineText )
         {
-            fields.Add(new EditorField(
+            fields.Add(new FormField(
                 "Maximum length",
-                EditorInputKind.Integer,
-                EditorChoice.None,
                 () => _maxLength,
-                value => _maxLength = value
+                value => _maxLength = value,
+                inputKind: FormInputKind.Integer
             ));
         }
 
@@ -408,65 +409,62 @@ internal sealed class ColumnEditorScreen : IFormScreen
         else if( !_isEdit && _kind == ColumnKind.Decimal )
         {
             AddNumericFields(fields);
-            fields.Add(new EditorField(
+            fields.Add(new FormField(
                 "Precision",
-                EditorInputKind.Integer,
-                EditorChoice.None,
                 () => _precision,
-                value => _precision = value
+                value => _precision = value,
+                inputKind: FormInputKind.Integer
             ));
         }
 
         if( !_isEdit && _kind == ColumnKind.YesNo )
         {
-            fields.Add(new EditorField(
+            fields.Add(new FormField(
                 "Default value",
-                EditorInputKind.Choice,
-                EditorChoice.BooleanDefault,
                 () => _booleanDefault ? "Yes" : "No",
-                _ => { }
+                _ => { },
+                inputKind: FormInputKind.Choice,
+                choice: true,
+                changeChoice: ChangeBooleanDefault
             ));
-            fields.Add(new EditorField(
+            fields.Add(new FormField(
                 "Yes label",
-                EditorInputKind.Text,
-                EditorChoice.None,
                 () => _booleanTrueLabel,
-                value => _booleanTrueLabel = value
+                value => _booleanTrueLabel = value,
+                inputKind: FormInputKind.Text
             ));
-            fields.Add(new EditorField(
+            fields.Add(new FormField(
                 "No label",
-                EditorInputKind.Text,
-                EditorChoice.None,
                 () => _booleanFalseLabel,
-                value => _booleanFalseLabel = value
+                value => _booleanFalseLabel = value,
+                inputKind: FormInputKind.Text
             ));
         }
 
-        fields.Add(new EditorField(
+        fields.Add(new FormField(
             "Requirement",
-            EditorInputKind.Choice,
-            EditorChoice.Requirement,
             () => RequirementLevels.GetDisplayName(_requirement),
-            _ => { }
+            _ => { },
+            inputKind: FormInputKind.Choice,
+            choice: true,
+            changeChoice: ChangeRequirement
         ));
         return fields;
     }
 
-    private void AddNumericFields(List<EditorField> fields)
+    private void AddNumericFields(List<FormField> fields)
     {
-        fields.Add(new EditorField(
+        fields.Add(new FormField(
             "Minimum value",
-            EditorInputKind.Decimal,
-            EditorChoice.None,
             () => _minValue,
-            value => _minValue = value
+            value => _minValue = value,
+            inputKind: FormInputKind.Decimal
         ));
-        fields.Add(new EditorField(
+        fields.Add(new FormField(
             "Maximum value",
-            EditorInputKind.Decimal,
-            EditorChoice.None,
             () => _maxValue,
-            value => _maxValue = value
+            value => _maxValue = value,
+            inputKind: FormInputKind.Decimal
         ));
     }
 
@@ -476,23 +474,23 @@ internal sealed class ColumnEditorScreen : IFormScreen
         Touch();
     }
 
-    private void ChangeChoice(EditorChoice choice, int direction)
+    private void ChangeKind(int direction)
     {
-        switch( choice )
-        {
-            case EditorChoice.ColumnKind:
-                var previousKind = _kind;
-                _kind = CycleKind(_kind, direction);
-                SetTypeDefaults(previousKind, _kind);
-                break;
-            case EditorChoice.Requirement:
-                _requirement = CycleRequirement(_requirement, direction);
-                break;
-            case EditorChoice.BooleanDefault:
-                _booleanDefault = !_booleanDefault;
-                break;
-        }
+        var previousKind = _kind;
+        _kind = CycleKind(_kind, direction);
+        SetTypeDefaults(previousKind, _kind);
+        Touch();
+    }
 
+    private void ChangeRequirement(int direction)
+    {
+        _requirement = CycleRequirement(_requirement, direction);
+        Touch();
+    }
+
+    private void ChangeBooleanDefault(int direction)
+    {
+        _booleanDefault = !_booleanDefault;
         Touch();
     }
 
@@ -504,8 +502,8 @@ internal sealed class ColumnEditorScreen : IFormScreen
                 || nextKind == ColumnKind.MultilineText) )
         {
             var previousDefault = previousKind == ColumnKind.Text
-                ? ColumnDefaults.TextLength
-                : ColumnDefaults.MultilineLength;
+                ? ColumnDefaults.TextDefaultLength
+                : ColumnDefaults.MultilineDefaultLength;
             if( int.TryParse(
                 _maxLength,
                 NumberStyles.Integer,
@@ -514,8 +512,8 @@ internal sealed class ColumnEditorScreen : IFormScreen
             ) && currentLength == previousDefault )
             {
                 var nextDefault = nextKind == ColumnKind.Text
-                    ? ColumnDefaults.TextLength
-                    : ColumnDefaults.MultilineLength;
+                    ? ColumnDefaults.TextDefaultLength
+                    : ColumnDefaults.MultilineDefaultLength;
                 _maxLength = nextDefault.ToString(
                     CultureInfo.InvariantCulture
                 );
@@ -524,22 +522,22 @@ internal sealed class ColumnEditorScreen : IFormScreen
 
         if( nextKind == ColumnKind.WholeNumber )
         {
-            _minValue = ColumnDefaults.WholeNumberMin.ToString(
+            _minValue = ColumnDefaults.WholeNumberDefaultMin.ToString(
                 CultureInfo.InvariantCulture
             );
-            _maxValue = ColumnDefaults.WholeNumberMax.ToString(
+            _maxValue = ColumnDefaults.WholeNumberDefaultMax.ToString(
                 CultureInfo.InvariantCulture
             );
         }
         else if( nextKind == ColumnKind.Decimal )
         {
-            _minValue = ColumnDefaults.DecimalMin.ToString(
+            _minValue = ColumnDefaults.DecimalDefaultMin.ToString(
                 CultureInfo.InvariantCulture
             );
-            _maxValue = ColumnDefaults.DecimalMax.ToString(
+            _maxValue = ColumnDefaults.DecimalDefaultMax.ToString(
                 CultureInfo.InvariantCulture
             );
-            _precision = ColumnDefaults.DecimalPrecision.ToString(
+            _precision = ColumnDefaults.DecimalDefaultPrecision.ToString(
                 CultureInfo.InvariantCulture
             );
         }
@@ -577,7 +575,23 @@ internal sealed class ColumnEditorScreen : IFormScreen
         CancellationToken cancellationToken
     )
     {
-        var validationError = ValidateCreate(
+        var schemaSuffix = string.IsNullOrWhiteSpace(_schemaSuffix)
+            ? FormViewHelpers.ToSchemaSuffix(_displayName, "field")
+            : _schemaSuffix;
+        var values = new ColumnCreateValues(
+            _displayName,
+            schemaSuffix,
+            _description,
+            _kind,
+            _maxLength,
+            _minValue,
+            _maxValue,
+            _precision,
+            _booleanTrueLabel,
+            _booleanFalseLabel
+        );
+        var validationError = ColumnEditorValidator.ValidateCreate(
+            values,
             out var maxLength,
             out var minimum,
             out var maximum,
@@ -594,13 +608,14 @@ internal sealed class ColumnEditorScreen : IFormScreen
             return;
         }
 
+        _schemaSuffix = schemaSuffix;
         var request = new CreateColumnRequest
         {
             Context = _context,
             TableLogicalName = _tableLogicalName,
             TableMetadataId = _tableMetadataId,
             DisplayName = _displayName,
-            SchemaSuffix = _schemaSuffix,
+            SchemaSuffix = schemaSuffix,
             Description = string.IsNullOrWhiteSpace(_description)
                 ? null
                 : _description,
@@ -753,210 +768,6 @@ internal sealed class ColumnEditorScreen : IFormScreen
             : "No changes to save.";
     }
 
-    private string? ValidateCreate(
-        out int? maxLength,
-        out decimal? minimum,
-        out decimal? maximum,
-        out int? precision
-    )
-    {
-        maxLength = null;
-        minimum = null;
-        maximum = null;
-        precision = null;
-        if( string.IsNullOrWhiteSpace(_displayName) )
-        {
-            return "Display name is required.";
-        }
-
-        if( _displayName.Length > ColumnDefaults.DisplayLengthMax )
-        {
-            return $"Display name must be {ColumnDefaults.DisplayLengthMax} "
-                + "characters or fewer.";
-        }
-
-        if( string.IsNullOrWhiteSpace(_schemaSuffix) )
-        {
-            _schemaSuffix = ToSchemaSuffix(_displayName);
-        }
-
-        if( _schemaSuffix.Length > ColumnDefaults.SchemaNameLengthMax )
-        {
-            return $"Schema suffix must be {ColumnDefaults.SchemaNameLengthMax} "
-                + "characters or fewer.";
-        }
-
-        if( _description.Length > ColumnDefaults.DescriptionLengthMax )
-        {
-            return $"Description must be {ColumnDefaults.DescriptionLengthMax} "
-                + "characters or fewer.";
-        }
-
-        if( _kind == ColumnKind.Text || _kind == ColumnKind.MultilineText )
-        {
-            var maximumLength = _kind == ColumnKind.Text
-                ? ColumnDefaults.TextMaxLength
-                : ColumnDefaults.MultilineMaxLength;
-            if( !int.TryParse(
-                _maxLength,
-                NumberStyles.Integer,
-                CultureInfo.InvariantCulture,
-                out var parsedLength
-            )
-                || parsedLength < 1
-                || parsedLength > maximumLength )
-            {
-                return "Maximum length is outside the supported range.";
-            }
-
-            maxLength = parsedLength;
-        }
-
-        if( _kind == ColumnKind.WholeNumber
-            || _kind == ColumnKind.Decimal )
-        {
-            var error = ParseDecimal(_minValue, "Minimum value", out minimum);
-            if( error != null )
-            {
-                return error;
-            }
-
-            error = ParseDecimal(_maxValue, "Maximum value", out maximum);
-            if( error != null )
-            {
-                return error;
-            }
-
-            if( minimum > maximum )
-            {
-                return "Minimum value must not exceed maximum value.";
-            }
-
-            var lowerBound = _kind == ColumnKind.WholeNumber
-                ? ColumnDefaults.WholeNumberLowerBound
-                : ColumnDefaults.DecimalLowerBound;
-            var upperBound = _kind == ColumnKind.WholeNumber
-                ? ColumnDefaults.WholeNumberUpperBound
-                : ColumnDefaults.DecimalUpperBound;
-            if( (minimum.HasValue && minimum.Value < lowerBound)
-                || (maximum.HasValue && maximum.Value > upperBound) )
-            {
-                return "Numeric bounds are outside the supported range.";
-            }
-
-            if( _kind == ColumnKind.WholeNumber
-                && ((minimum.HasValue
-                    && minimum.Value != decimal.Truncate(minimum.Value))
-                    || (maximum.HasValue
-                        && maximum.Value != decimal.Truncate(maximum.Value))) )
-            {
-                return "Whole number bounds must be whole numbers.";
-            }
-        }
-
-        if( _kind == ColumnKind.Decimal )
-        {
-            if( !int.TryParse(
-                _precision,
-                NumberStyles.Integer,
-                CultureInfo.InvariantCulture,
-                out var parsedPrecision
-            )
-                || parsedPrecision < 0
-                || parsedPrecision > ColumnDefaults.DecimalMaxPrecision )
-            {
-                return "Precision must be between 0 and 10.";
-            }
-
-            precision = parsedPrecision;
-        }
-
-        if( _kind == ColumnKind.YesNo )
-        {
-            if( string.IsNullOrWhiteSpace(_booleanTrueLabel)
-                || string.IsNullOrWhiteSpace(_booleanFalseLabel) )
-            {
-                return "Yes and No labels are required.";
-            }
-        }
-
-        return null;
-    }
-
-    private static string? ParseDecimal(
-        string value,
-        string field,
-        out decimal? result
-    )
-    {
-        if( string.IsNullOrWhiteSpace(value) )
-        {
-            result = null;
-            return null;
-        }
-
-        if( decimal.TryParse(
-            value,
-            NumberStyles.Number,
-            CultureInfo.InvariantCulture,
-            out var parsed
-        ) )
-        {
-            result = parsed;
-            return null;
-        }
-
-        result = null;
-        return field + " must use a valid number with '.' as decimal separator.";
-    }
-
-    private static bool IsAllowedCharacter(
-        EditorInputKind kind,
-        char value
-    )
-    {
-        if( kind == EditorInputKind.Decimal )
-        {
-            return char.IsDigit(value) || value == '-' || value == '.';
-        }
-
-        if( kind == EditorInputKind.Integer )
-        {
-            return char.IsDigit(value) || value == '-';
-        }
-
-        return true;
-    }
-
-    private static string DisplayValue(string value)
-    {
-        return string.IsNullOrEmpty(value) ? "—" : value;
-    }
-
-    private static string ToSchemaSuffix(string displayName)
-    {
-        var chars = displayName
-            .Where(char.IsLetterOrDigit)
-            .ToArray();
-        var suffix = new string(chars);
-        if( suffix.Length == 0 )
-        {
-            return "field";
-        }
-
-        return char.ToLowerInvariant(suffix[0]) + suffix[1..];
-    }
-
-    private string BuildPredictedName(string suffix)
-    {
-        if( string.IsNullOrWhiteSpace(suffix) )
-        {
-            return "—";
-        }
-
-        return _context.PublisherPrefix + "_" + suffix;
-    }
-
     private static string GetKindText(ColumnKind kind)
     {
         return kind switch
@@ -970,16 +781,6 @@ internal sealed class ColumnEditorScreen : IFormScreen
         };
     }
 
-    private IRenderable RenderStatus(int width)
-    {
-        var style = _hasError
-            ? Style.Parse("red")
-            : _submitting
-                ? Style.Parse("yellow")
-                : Style.Parse("green");
-        return Progress.RenderStatus(width, "  " + _status, style);
-    }
-
     private static void AddRow(
         Table table,
         string label,
@@ -988,7 +789,7 @@ internal sealed class ColumnEditorScreen : IFormScreen
     {
         table.AddRow(
             new Text(label, TuiColors.SecondaryText),
-            new Text(DisplayValue(value))
+            new Text(FormViewHelpers.DisplayValue(value))
         );
     }
 
@@ -997,43 +798,4 @@ internal sealed class ColumnEditorScreen : IFormScreen
         Interlocked.Increment(ref _revision);
     }
 
-    private enum EditorInputKind
-    {
-        Text,
-        Integer,
-        Decimal,
-        Choice
-    }
-
-    private enum EditorChoice
-    {
-        None,
-        ColumnKind,
-        Requirement,
-        BooleanDefault
-    }
-
-    private sealed class EditorField
-    {
-        public EditorField(
-            string label,
-            EditorInputKind inputKind,
-            EditorChoice choice,
-            Func<string> read,
-            Action<string> write
-        )
-        {
-            Label = label;
-            InputKind = inputKind;
-            Choice = choice;
-            Read = read;
-            Write = write;
-        }
-
-        public string Label { get; }
-        public EditorInputKind InputKind { get; }
-        public EditorChoice Choice { get; }
-        public Func<string> Read { get; }
-        public Action<string> Write { get; }
-    }
 }

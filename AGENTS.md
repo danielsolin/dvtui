@@ -10,7 +10,7 @@ dvtui is a small .NET console application built around a terminal user
 interface. It's goal is to let a user administrate a Dataverse environment from
 the terminal.
 
-- `Program.cs` contains startup, input handling, and screen rendering.
+- `Program.cs` contains application startup and lifecycle orchestration.
 - `Services/` contains Dataverse connection and metadata access code.
 - `Models/` contains data objects used by the TUI.
 - `dvtui.csproj` defines the .NET target and NuGet dependencies.

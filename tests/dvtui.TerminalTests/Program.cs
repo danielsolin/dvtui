@@ -4,13 +4,12 @@ using dvtui.Models;
 using dvtui.Services;
 using dvtui.Views;
 using dvtui.TerminalTests;
-using Progress = dvtui.Views.Progress;
 
 var mode = args.FirstOrDefault() ?? "solution-selection";
 
 if( mode == "live-test" )
 {
-    ConfigureWslBrowser();
+    TerminalSession.ConfigureWslBrowser();
     return LiveTest.Run(args.Skip(1).ToArray());
 }
 
@@ -355,94 +354,17 @@ static string RunTableColumnsScreen(
         AnsiConsole.Clear();
         try
         {
-            var action = new TableColumnsAction[1];
-            var column = new DataverseColumn?[1];
             AnsiConsole.Live(screen.Render())
-                .StartAsync(async ctx =>
-                {
-                    using var progressHost = Progress.Attach();
-                    using var cancellation = new CancellationTokenSource();
-                    try
-                    {
-                        var loadTask = screen.LoadAsync(
-                            cancellation.Token
-                        );
-                        var lastRevision = -1;
-                        var lastSize = (Width: 0, Height: 0);
-                        while( true )
-                        {
-                            var refresh = false;
-                            if( loadTask != null
-                                && loadTask.IsCompleted )
-                            {
-                                loadTask = null;
-                                refresh = true;
-                            }
-
-                            var inputLocked = Progress.DiscardPendingInput(
-                                "TableColumnsScreen"
-                            );
-                            while( !inputLocked && Console.KeyAvailable )
-                            {
-                                if( Progress.DiscardPendingInput(
-                                    "TableColumnsScreen"
-                                ) )
-                                {
-                                    inputLocked = true;
-                                    break;
-                                }
-
-                                var key = Console.ReadKey(
-                                    intercept: true
-                                );
-                                if( key.Key == ConsoleKey.R
-                                    && loadTask == null )
-                                {
-                                    loadTask = screen.LoadAsync(
-                                        cancellation.Token
-                                    );
-                                }
-                                else
-                                {
-                                    screen.HandleKey(key);
-                                }
-
-                                if( screen.PendingAction !=
-                                    TableColumnsAction.None )
-                                {
-                                    action[0] = screen.PendingAction;
-                                    column[0] = screen.PendingColumn;
-                                    return;
-                                }
-                            }
-
-                            var size = (
-                                AnsiConsole.Profile.Width,
-                                AnsiConsole.Profile.Height
-                            );
-                            var revision = screen.Revision;
-                            if( refresh
-                                || revision != lastRevision
-                                || Progress.IsActive
-                                || size != lastSize )
-                            {
-                                ctx.UpdateTarget(screen.Render());
-                                lastRevision = revision;
-                                lastSize = size;
-                            }
-                            await Task.Delay(100);
-                        }
-                    }
-                    finally
-                    {
-                        cancellation.Cancel();
-                    }
-                })
+                .StartAsync(ctx => ScreenRunner.RunTableColumnsAsync(
+                    screen,
+                    ctx,
+                    loadColumns: true
+                ))
                 .GetAwaiter()
                 .GetResult();
 
-            result = action[0].ToString().ToLowerInvariant();
-            var pendingColumn = column[0];
+            result = screen.PendingAction.ToString().ToLowerInvariant();
+            var pendingColumn = screen.PendingColumn;
             if( pendingColumn != null )
             {
                 result += ":" + pendingColumn.SchemaName;
@@ -477,7 +399,7 @@ static string RunCreateTableScreen(
         try
         {
             AnsiConsole.Live(screen.Render())
-                .StartAsync(ctx => RunFormScreen(
+                .StartAsync(ctx => ScreenRunner.RunFormAsync(
                     screen,
                     ctx,
                     token => screen.SubmitAsync(token)
@@ -526,7 +448,7 @@ static string RunColumnEditorScreen(
         try
         {
             AnsiConsole.Live(screen.Render())
-                .StartAsync(ctx => RunFormScreen(
+                .StartAsync(ctx => ScreenRunner.RunFormAsync(
                     screen,
                     ctx,
                     token => screen.SubmitAsync(token)
@@ -545,115 +467,4 @@ static string RunColumnEditorScreen(
         }
     });
     return result;
-}
-
-static async Task RunFormScreen<TScreen>(
-    TScreen screen,
-    LiveDisplayContext context,
-    Func<CancellationToken, Task> submit
-)
-    where TScreen : IFormScreen
-{
-    using var progressHost = Progress.Attach();
-    using var cancellation = new CancellationTokenSource();
-    while( true )
-    {
-        var lastRevision = -1;
-        var lastSize = (Width: 0, Height: 0);
-        while( screen.PendingAction == FormAction.None )
-        {
-            var inputLocked = Progress.DiscardPendingInput(
-                typeof(TScreen).Name
-            );
-            if( !inputLocked && Console.KeyAvailable )
-            {
-                var key = Console.ReadKey(intercept: true);
-                screen.HandleKey(key);
-            }
-
-            var size = (
-                AnsiConsole.Profile.Width,
-                AnsiConsole.Profile.Height
-            );
-            var revision = screen.Revision;
-            if( revision != lastRevision
-                || size != lastSize )
-            {
-                context.UpdateTarget(screen.Render());
-                lastRevision = revision;
-                lastSize = size;
-            }
-            await Task.Delay(100);
-        }
-
-        if( screen.PendingAction == FormAction.Close )
-        {
-            return;
-        }
-
-        var submitTask = Progress.Show(
-            screen.ProgressMessage,
-            cancellation.Token,
-            submit
-        );
-        lastRevision = -1;
-        lastSize = (Width: 0, Height: 0);
-        while( !submitTask.IsCompleted )
-        {
-            Progress.DiscardPendingInput(typeof(TScreen).Name);
-
-            var size = (
-                AnsiConsole.Profile.Width,
-                AnsiConsole.Profile.Height
-            );
-            var revision = screen.Revision;
-            if( revision != lastRevision
-                || Progress.IsActive
-                || size != lastSize )
-            {
-                context.UpdateTarget(screen.Render());
-                lastRevision = revision;
-                lastSize = size;
-            }
-            await Task.Delay(100);
-        }
-
-        await submitTask;
-        context.UpdateTarget(screen.Render());
-        if( screen.OutcomeUnknown )
-        {
-            return;
-        }
-
-        if( screen.HasError )
-        {
-            screen.ResetForRetry();
-            continue;
-        }
-
-        await Task.Delay(500);
-        return;
-    }
-}
-
-static void ConfigureWslBrowser()
-{
-    if( !OperatingSystem.IsLinux() )
-    {
-        return;
-    }
-
-    var wslDistribution =
-        Environment.GetEnvironmentVariable("WSL_DISTRO_NAME");
-
-    if( string.IsNullOrWhiteSpace(wslDistribution) )
-    {
-        return;
-    }
-
-    if( string.IsNullOrWhiteSpace(
-        Environment.GetEnvironmentVariable("DE")) )
-    {
-        Environment.SetEnvironmentVariable("DE", "wsl");
-    }
 }

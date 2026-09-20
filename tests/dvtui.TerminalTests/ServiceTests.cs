@@ -223,7 +223,7 @@ internal static class ServiceTests
         };
 
         var result = new DataverseSchemaService(fake)
-            .LoadColumnDefinitionAsync(
+            .GetColumnDefinitionAsync(
                 "new_things",
                 "new_note",
                 retrieveAsIfPublished: false,
@@ -295,7 +295,7 @@ internal static class ServiceTests
             Format = StringFormat.Text,
             FormatName = StringFormatName.Text
         };
-        var column = DataverseSchemaService.CreateColumn(metadata);
+        var column = SchemaMetadataFactory.CreateColumn(metadata);
 
         Check(
             column.AttributeFormat == "Text",
@@ -312,7 +312,7 @@ internal static class ServiceTests
             SchemaName = "new_text"
         };
         SetReadOnly(metadata, "AttributeType", AttributeTypeCode.String);
-        var column = DataverseSchemaService.CreateColumn(metadata);
+        var column = SchemaMetadataFactory.CreateColumn(metadata);
 
         Check(
             column.Kind == ColumnKind.Text,
@@ -616,7 +616,7 @@ internal static class ServiceTests
                     DisplayName = "Amount",
                     SchemaSuffix = "amount",
                     Kind = ColumnKind.Decimal,
-                    Precision = ColumnDefaults.DecimalMaxPrecision + 1
+                    Precision = ColumnDefaults.DecimalAllowedMaxPrecision + 1
                 },
                 CancellationToken.None
             ).GetAwaiter().GetResult();

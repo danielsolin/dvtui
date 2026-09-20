@@ -20,7 +20,7 @@ internal static class MessageScreen
             .SplitRows(
                 new Layout().Update(panel),
                 new Layout().Size(1).Update(
-                    new Text("  Enter/Esc: back", Style.Parse("dim"))
+                    new Text("  Enter/Esc: back")
                 )
             );
         AnsiConsole.Clear();

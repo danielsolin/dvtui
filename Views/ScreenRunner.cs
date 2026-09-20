@@ -15,18 +15,17 @@ internal enum SchemaMutationOutcome
 internal static class ScreenRunner
 {
     internal const int FormPollIntervalMilliseconds = 50;
-    internal static readonly TimeSpan FormOperationTimeout =
-        TimeSpan.FromMinutes(2);
-    internal static readonly TimeSpan FormCancellationGracePeriod =
-        TimeSpan.FromSeconds(3);
 
     internal static async Task RunFormAsync<TScreen>(
         TScreen screen,
         LiveDisplayContext context,
-        Func<CancellationToken, Task> submit
+        Func<CancellationToken, Task> submit,
+        Func<IRenderable>? render = null,
+        bool retryAfterError = true
     )
         where TScreen : IFormScreen
     {
+        var renderTarget = render ?? screen.Render;
         using var progressHost = Progress.Attach();
         while( true )
         {
@@ -62,7 +61,7 @@ internal static class ScreenRunner
                 if( revision != lastRevision
                     || size != lastSize )
                 {
-                    context.UpdateTarget(screen.Render());
+                    context.UpdateTarget(renderTarget());
                     lastRevision = revision;
                     lastSize = size;
                 }
@@ -75,51 +74,16 @@ internal static class ScreenRunner
                 return;
             }
 
-            using var cancellation = new CancellationTokenSource();
             var submitTask = Progress.Show(
                 screen.ProgressMessage,
-                cancellation.Token,
                 submit
             );
-            var timeoutAt = DateTime.UtcNow + FormOperationTimeout;
-            DateTime? cancellationStarted = null;
             lastRevision = -1;
             lastSize = (Width: 0, Height: 0);
 
             while( !submitTask.IsCompleted )
             {
                 Progress.DiscardPendingInput(typeof(TScreen).Name);
-
-                var now = DateTime.UtcNow;
-                if( !cancellation.IsCancellationRequested
-                    && now >= timeoutAt )
-                {
-                    screen.RequestCancellation();
-                    cancellation.Cancel();
-                    cancellationStarted = now;
-                    SessionLog.Warning(
-                        "UI.Form",
-                        "Operation timeout screen=" + typeof(TScreen).Name
-                    );
-                }
-
-                if( cancellationStarted.HasValue
-                    && now - cancellationStarted.Value
-                        >= FormCancellationGracePeriod )
-                {
-                    screen.MarkOutcomeUnknown(
-                        "The request did not finish after cancellation. "
-                        + "Verify Dataverse before retrying."
-                    );
-                    SessionLog.Warning(
-                        "UI.Form",
-                        "Cancellation grace period expired screen="
-                            + typeof(TScreen).Name
-                    );
-                    ObserveLateTask(submitTask);
-                    context.UpdateTarget(screen.Render());
-                    return;
-                }
 
                 var size = (
                     AnsiConsole.Profile.Width,
@@ -130,7 +94,7 @@ internal static class ScreenRunner
                     || Progress.IsActive
                     || size != lastSize )
                 {
-                    context.UpdateTarget(screen.Render());
+                    context.UpdateTarget(renderTarget());
                     lastRevision = revision;
                     lastSize = size;
                 }
@@ -144,7 +108,7 @@ internal static class ScreenRunner
                 "Submit completed screen=" + typeof(TScreen).Name
                     + " status=" + screen.Status
             );
-            context.UpdateTarget(screen.Render());
+            context.UpdateTarget(renderTarget());
             if( screen.OutcomeUnknown )
             {
                 return;
@@ -152,6 +116,11 @@ internal static class ScreenRunner
 
             if( screen.HasError )
             {
+                if( !retryAfterError )
+                {
+                    return;
+                }
+
                 SessionLog.Warning(
                     "UI.Form",
                     "Submit returned validation/error screen="
@@ -164,6 +133,95 @@ internal static class ScreenRunner
 
             await Task.Delay(500);
             return;
+        }
+    }
+
+    internal static async Task RunTableColumnsAsync(
+        TableColumnsScreen screen,
+        LiveDisplayContext context,
+        bool loadColumns,
+        Func<CancellationToken, Task>? loadFactory = null
+    )
+    {
+        loadFactory ??= screen.LoadAsync;
+        using var progressHost = Progress.Attach();
+        using var cancellation = new CancellationTokenSource();
+        Task? loadTask = loadColumns
+            ? loadFactory(cancellation.Token)
+            : null;
+        try
+        {
+            var lastRevision = -1;
+            var lastSize = (Width: 0, Height: 0);
+            while( screen.PendingAction == TableColumnsAction.None )
+            {
+                var refresh = false;
+                if( loadTask?.IsCompleted == true )
+                {
+                    loadTask = null;
+                    refresh = true;
+                }
+
+                var inputLocked = Progress.DiscardPendingInput(
+                    "TableColumnsScreen"
+                );
+                while( !inputLocked && Console.KeyAvailable )
+                {
+                    if( Progress.DiscardPendingInput(
+                        "TableColumnsScreen"
+                    ) )
+                    {
+                        inputLocked = true;
+                        break;
+                    }
+
+                    var key = Console.ReadKey(intercept: true);
+                    SessionLog.Key(
+                        "TableColumnsScreen",
+                        key,
+                        "loading=" + screen.Loading
+                    );
+                    if( key.Key == ConsoleKey.R
+                        && loadTask == null
+                        && screen.Editor == null )
+                    {
+                        loadTask = loadFactory(cancellation.Token);
+                    }
+                    else
+                    {
+                        screen.HandleKey(key);
+                    }
+
+                    if( screen.PendingAction != TableColumnsAction.None )
+                    {
+                        break;
+                    }
+                }
+
+                var size = (
+                    AnsiConsole.Profile.Width,
+                    AnsiConsole.Profile.Height
+                );
+                if( refresh
+                    || screen.Revision != lastRevision
+                    || Progress.IsActive
+                    || size != lastSize )
+                {
+                    context.UpdateTarget(screen.Render());
+                    lastRevision = screen.Revision;
+                    lastSize = size;
+                }
+
+                await Task.Delay(FormPollIntervalMilliseconds);
+            }
+        }
+        finally
+        {
+            cancellation.Cancel();
+            if( loadTask != null )
+            {
+                ObserveLateTask(loadTask);
+            }
         }
     }
 
@@ -196,7 +254,6 @@ internal static class ScreenRunner
             .StartAsync(async displayContext =>
             {
                 using var progressHost = Progress.Attach();
-                using var cancellation = new CancellationTokenSource();
                 Task mutationTask;
                 try
                 {
@@ -206,7 +263,6 @@ internal static class ScreenRunner
                     );
                     mutationTask = Progress.Show(
                         operationDescription,
-                        cancellation.Token,
                         operation
                     );
                 }
@@ -224,44 +280,9 @@ internal static class ScreenRunner
                     return;
                 }
 
-                var timeoutAt = DateTime.UtcNow + FormOperationTimeout;
-                DateTime? cancellationStarted = null;
                 while( !mutationTask.IsCompleted )
                 {
                     Progress.DiscardPendingInput("SchemaMutation");
-
-                    var now = DateTime.UtcNow;
-                    if( !cancellation.IsCancellationRequested
-                        && now >= timeoutAt )
-                    {
-                        cancellationStarted = now;
-                        cancellation.Cancel();
-                        status = "Cancelling "
-                            + operationDescription + " after timeout...";
-                        SessionLog.Warning(
-                            "UI.SchemaMutation",
-                            "Timeout requested operation=" + operationDescription
-                        );
-                    }
-
-                    if( cancellationStarted.HasValue
-                        && now - cancellationStarted.Value
-                            >= FormCancellationGracePeriod )
-                    {
-                        outcome = SchemaMutationOutcome.Unknown;
-                        status = "The outcome of "
-                            + operationDescription
-                            + " is unknown. Verify Dataverse before retrying.";
-                        ObserveLateTask(mutationTask);
-                        SessionLog.Warning(
-                            "UI.SchemaMutation",
-                            "Outcome unknown operation=" + operationDescription
-                        );
-                        displayContext.UpdateTarget(
-                            CreateOperationPanel(operationDescription, status)
-                        );
-                        return;
-                    }
 
                     displayContext.UpdateTarget(
                         CreateOperationPanel(operationDescription, status)
@@ -334,7 +355,12 @@ internal static class ScreenRunner
         var width = Math.Max(1, AnsiConsole.Profile.Width);
         return new Panel(new Rows(
             new Text(operationDescription),
-            Progress.RenderStatus(width, status, Style.Parse("yellow"))
+            Progress.RenderStatus(
+                width,
+                status,
+                Style.Parse("yellow"),
+                showActiveMessage: false
+            )
         ))
             .Header("Dataverse operation")
             .RoundedBorder()
