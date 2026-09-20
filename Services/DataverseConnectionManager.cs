@@ -12,15 +12,24 @@ public sealed class DataverseConnectionManager : IDisposable
     public DataverseConnectionManager(string url)
     {
         _environmentUrl = NormalizeEnvironmentUrl(url);
+        var tokenProvider = new MsalTokenProvider(
+            _environmentUrl,
+            GetTokenCachePath(_environmentUrl)
+        );
         var options = new ConnectionOptions
         {
-            AuthenticationType = AuthenticationType.OAuth,
+            AuthenticationType =
+                AuthenticationType.ExternalTokenManagement,
             ServiceUri = new Uri(_environmentUrl),
-            RedirectUri = new Uri("http://localhost"),
-            LoginPrompt = PromptBehavior.Auto,
+            AccessTokenProviderFunctionAsync =
+                _ => tokenProvider.GetTokenAsync(CancellationToken.None),
             SkipDiscovery = true
         };
 
+        SessionLog.Debug(
+            "Dataverse.Client",
+            "Token cache path=" + GetTokenCachePath(_environmentUrl)
+        );
         _client = new ServiceClient(options, deferConnection: true);
         var executor = new LoggingDataverseExecutor(
             new ServiceClientExecutor(_client)
@@ -89,6 +98,18 @@ public sealed class DataverseConnectionManager : IDisposable
             "Disposing client for environment=" + _environmentUrl
         );
         _client.Dispose();
+    }
+
+    private static string GetTokenCachePath(string environmentUrl)
+    {
+        var directory = Path.Combine(
+            Environment.GetFolderPath(Environment.SpecialFolder.ApplicationData),
+            "dvtui"
+        );
+        Directory.CreateDirectory(directory);
+        var host = new Uri(environmentUrl).Host;
+        var fileName = "token-cache-" + host + ".dat";
+        return Path.Combine(directory, fileName);
     }
 
     private static string NormalizeEnvironmentUrl(string url)
