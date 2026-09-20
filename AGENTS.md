@@ -13,6 +13,7 @@ the terminal.
 - `Program.cs` contains application startup and lifecycle orchestration.
 - `Services/` contains Dataverse connection and metadata access code.
 - `Models/` contains data objects used by the TUI.
+- `Views/` contains classed for TUI views.
 - `dvtui.csproj` defines the .NET target and NuGet dependencies.
 - `tests/` contains the terminal test host and Python integration runner.
 
