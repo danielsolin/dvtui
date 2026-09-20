@@ -457,6 +457,20 @@ static string RunTableColumnsMutationScreen(
                 mutation = null;
                 var action = screen.PendingAction;
                 var pendingColumn = screen.PendingColumn;
+                if( action == TableColumnsAction.SaveColumn
+                    && screen.Editor != null )
+                {
+                    var saved = RunEmbeddedColumnEditor(
+                        screen,
+                        screen.Editor
+                    );
+                    screen.CompleteEdit(saved);
+                    if( saved )
+                    {
+                        loadColumns = true;
+                    }
+                    continue;
+                }
                 if( action == TableColumnsAction.DeleteColumn
                     && pendingColumn != null )
                 {
@@ -494,6 +508,25 @@ static string RunTableColumnsMutationScreen(
         }
     });
     return result;
+}
+
+static bool RunEmbeddedColumnEditor(
+    TableColumnsScreen host,
+    ColumnEditorScreen editor
+)
+{
+    AnsiConsole.Clear();
+    AnsiConsole.Live(host.Render())
+        .StartAsync(ctx => ScreenRunner.RunFormAsync(
+            editor,
+            ctx,
+            token => editor.SubmitAsync(token),
+            host.Render,
+            retryAfterError: false
+        ))
+        .GetAwaiter()
+        .GetResult();
+    return editor.MutationSucceeded;
 }
 
 static SchemaMutation PrepareDeleteMutation(

@@ -208,6 +208,7 @@ internal sealed class TableColumnsScreen
         if( succeeded )
         {
             _editor = null;
+            _detailsFocused = false;
             _sessionPendingChanges = true;
             _status = "Column saved. Reloading columns...";
         }
@@ -732,6 +733,13 @@ internal sealed class TableColumnsScreen
         {
             return new Text(
                 "  Tab: next  Shift+Tab: previous  Ctrl+S: save  Esc: list"
+            );
+        }
+
+        if( _detailsFocused )
+        {
+            return new Text(
+                "  R: Refresh  Tab: list  Esc: list"
             );
         }
 

@@ -482,6 +482,40 @@ def test_table_columns_edits_in_detail_pane():
     print("table-columns inline edit passed")
 
 
+def test_table_columns_save_returns_focus_to_list():
+    master_fd, process = start_process("table-columns-mutation")
+    try:
+        data = read_until(master_fd, "2 columns")
+        data += read_available(master_fd, 0.5)
+        assert "N: New" in data
+        press_key(master_fd, "\t")
+        frame = read_until(master_fd, "Tab: list", timeout=5)
+        frame += read_available(master_fd, 0.5)
+        segment = frame[frame.index("Tab: list") - 20:]
+        assert "N: New" not in segment
+        press_key(master_fd, "\t")
+        frame = read_until(master_fd, "Green: editable", timeout=5)
+        frame += read_available(master_fd, 0.5)
+        assert "N: New" in frame
+        press_key(master_fd, "E")
+        data = read_until(master_fd, "Ctrl+S: save")
+        data += read_available(master_fd, 0.3)
+        assert "Editing new_custom" in data
+        press_key(master_fd, "x")
+        press_key(master_fd, "\x13")
+        data = read_until(master_fd, "Green: editable", timeout=10)
+        data += read_available(master_fd, 1.0)
+        assert "N: New" in data
+        assert "2 columns" in data
+        press_key(master_fd, "\x1b")
+        final = drain_until_exit(master_fd, process)
+        assert "close" in final
+    finally:
+        stop_process(process)
+        os.close(master_fd)
+    print("table-columns save refocus passed")
+
+
 def test_table_columns_delete_progress_stays_in_screen():
     master_fd, process = start_process("table-columns-mutation")
     try:
@@ -664,6 +698,7 @@ def main():
         test_table_columns_escape_returns_to_list,
         test_table_columns_navigates_and_deletes,
         test_table_columns_edits_in_detail_pane,
+        test_table_columns_save_returns_focus_to_list,
         test_table_columns_delete_progress_stays_in_screen,
         test_table_columns_publish_progress_stays_in_screen,
         test_confirmation_stays_in_tui,
