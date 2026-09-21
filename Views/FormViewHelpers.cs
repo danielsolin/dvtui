@@ -5,6 +5,24 @@ namespace dvtui.Views;
 
 internal static class FormViewHelpers
 {
+    internal static void AddRow(Table table, string label, string? value)
+    {
+        table.AddRow(
+            new Text(label, TuiColors.SecondaryText),
+            new Text(string.IsNullOrWhiteSpace(value) ? "—" : value)
+        );
+    }
+
+    internal static string FormatBoolean(bool? value)
+    {
+        return value switch
+        {
+            true => "Yes",
+            false => "No",
+            null => "Unknown"
+        };
+    }
+
     internal static string DisplayValue(string value)
     {
         return string.IsNullOrEmpty(value) ? "—" : value;

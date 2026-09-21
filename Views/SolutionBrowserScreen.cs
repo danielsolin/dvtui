@@ -524,7 +524,7 @@ internal sealed class SolutionBrowserScreen
             || height < TuiConstants.MinimumHeight )
         {
             return new Text(
-                "Enlarge the terminal (60 x 10). Q: quit | Esc: list/back."
+                TuiLayout.MinimumSizeHint("Q: quit | Esc: list/back.")
             );
         }
 

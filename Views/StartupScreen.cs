@@ -192,7 +192,7 @@ internal sealed class StartupScreen
                 TimeSpan.FromMilliseconds(TuiConstants.ShutdownTimeoutMilliseconds)
             ) )
             {
-                ObserveFaults(connection);
+                ScreenRunner.ObserveLateTask(connection);
                 return;
             }
         }
@@ -207,17 +207,6 @@ internal sealed class StartupScreen
                 _connectionCancellation = null;
             }
         }
-    }
-
-    private static void ObserveFaults(Task task)
-    {
-        _ = task.ContinueWith(
-            completed => _ = completed.Exception,
-            CancellationToken.None,
-            TaskContinuationOptions.OnlyOnFaulted
-                | TaskContinuationOptions.ExecuteSynchronously,
-            TaskScheduler.Default
-        );
     }
 
     private IRenderable Render()

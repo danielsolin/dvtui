@@ -231,11 +231,10 @@ internal sealed class TableColumnsScreen
     {
         var width = AnsiConsole.Profile.Width;
         var height = AnsiConsole.Profile.Height;
-        if( width < 60 || height < 10 )
+        if( width < TuiConstants.MinimumWidth
+            || height < TuiConstants.MinimumHeight )
         {
-            return new Text(
-                "Enlarge the terminal (60 x 10). Esc: back."
-            );
+            return new Text(TuiLayout.MinimumSizeHint("Esc: back."));
         }
 
         _listHeight = Math.Max(1, height - 6);

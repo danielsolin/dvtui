@@ -57,16 +57,17 @@ affected screens.
 `Services/DataverseQueryService.cs:159` but has no production caller. Its only
 caller is `tests/dvtui.TerminalTests/LiveTest.cs:487`.
 
-**Why:** Dead code in the shipped application surface.
+**Why:** This widens the shipped service interface for an opt-in live-test cleanup
+fallback. The fallback handles the case where retrieval by metadata ID is temporarily
+unavailable after table creation.
 
-**Recommended action:** Delete the interface member and implementation, and
-update `LiveTest.cs:487` to retrieve by logical name through the remaining
-mechanism (or delete that fallback branch if the by-ID retrieve is sufficient
-for the live cleanup path).
+**Recommended action:** Keep this method for now. If it is removed later, first
+introduce a test-owned retrieval path and verify the live cleanup behavior before
+deleting the fallback.
 
-**Uncertainty/risk:** Low. LiveTest is an opt-in live test; the fallback
+**Uncertainty/risk:** Medium. LiveTest is an opt-in live test, and the fallback
 exists for an edge case where the just-created table is not yet visible by
-metadata ID. Confirm with the live test if it is run in CI.
+metadata ID.
 
 ## 4. Unused production API: `DeleteTableAsync`
 
@@ -75,17 +76,16 @@ metadata ID. Confirm with the live test if it is run in CI.
 `Services/DataverseSchemaService.cs:1053` but no UI flow deletes tables. The
 only caller is `tests/dvtui.TerminalTests/LiveTest.cs:504`.
 
-**Why:** Dead feature in the production surface; it also skips the write
-prechecks every other write in this service performs.
+**Why:** This is a test-only service surface with an unsafe signature: it accepts
+only a logical name and skips the write prechecks used by the other write methods.
 
-**Recommended action:** Delete the interface member and implementation, and
-move the live-test table deletion to a direct executor call inside the test
-project (the test already owns a service stack it can wire a raw request
-through).
+**Recommended action:** Keep it for now so the live test retains one cleanup path.
+Do not move a raw delete request into the test project just to remove this method.
+If it is redesigned, require table identity and write context, then preserve
+post-delete verification.
 
-**Uncertainty/risk:** Medium-low. LiveTest cleanup relies on this; the test
-must be adjusted first. If table deletion is planned as a future UI feature,
-keep it and note that intentionally.
+**Uncertainty/risk:** Medium. LiveTest cleanup relies on this, and the current
+signature makes accidental deletion easier than the other write operations.
 
 ## 5. Duplicated "observe faulted task" code
 
@@ -146,13 +146,14 @@ directly from `Create`.
 
 ## 8. Dead property: `MsalTokenProvider.EnvironmentUrl`
 
-**Finding:** `Services/MsalTokenProvider.cs:30,48` - `EnvironmentUrl` is
-assigned in the constructor and never read anywhere.
+**Finding:** `Services/MsalTokenProvider.cs:30,48` - the `EnvironmentUrl`
+property is assigned in the constructor and never read anywhere. The constructor
+parameter itself is still used to build the OAuth scope at line 32.
 
 **Why:** Dead code.
 
-**Recommended action:** Delete the property and drop the unused constructor
-parameter (keep `cachePath`).
+**Recommended action:** Delete the property and its assignment. Keep the
+`environmentUrl` constructor parameter because it is required for `_scopes`.
 
 **Uncertainty/risk:** None.
 
@@ -221,17 +222,17 @@ identity validation/verification (it can live next to
 ## 12. Defensive type check in `WebApiClient`
 
 **Finding:** `Services/WebApiClient.cs:31` -
-`_client is not IDataverseWebExecutor` skips the fallback with a log message
-referring to a "test executor". In production the executor always implements
-`IDataverseWebExecutor`; only the test fakes do not.
+`_client is not IDataverseWebExecutor` makes the fallback a no-op and logs a
+message referring to a "test executor". The current `FakeExecutor` already
+implements `IDataverseWebExecutor`; the condition still matters for any custom
+executor that supports SDK requests but not Web API requests.
 
-**Why:** The app layer quietly degrades behavior based on test doubles.
+**Why:** The fallback contract is implicit, and a non-Web-API executor can cause
+the requirement update to be skipped without an error.
 
-**Recommended action:** Either make `UpdateRequirementLevelAsync` take the web
-executor as a required dependency (constructor injection of
-`IDataverseWebExecutor`) or fail clearly when it is missing, instead of
-silently returning. The test fakes should implement the interface or the
-fallback should be made optional at the test level.
+**Recommended action:** If the fallback is required, inject
+`IDataverseWebExecutor` and fail clearly when it is unavailable. If it is
+intentionally optional, keep the guard but document and test the no-op behavior.
 
 **Uncertainty/risk:** Low. `ServiceTests.cs:933`
 (`TestUpdateRequirementUsesWebApiFallback`) exercises this path and would need
@@ -259,3 +260,9 @@ it for both the provider and the log line.
 3. Unused API removal: findings 3, 4 (adjust `LiveTest.cs` first).
 4. Validation dedup: finding 6 (service tests must stay green).
 5. Larger split: findings 10, 11, 12 last, after the above land.
+
+## Follow-up (2026-09-21)
+
+The current cleanup pass implemented findings 2, 5, 7, 8, 9, and 13. Findings
+1, 3, 4, 6, 10, 11, and 12 remain deferred because they need broader design or
+live-test decisions.

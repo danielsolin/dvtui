@@ -11,7 +11,7 @@ internal static class ComponentDetailsView
     {
         var rows = new List<IRenderable>
         {
-            CreateOverview(component)
+            CreateMembership(component)
         };
         if( component.ResolutionError != null )
         {
@@ -37,28 +37,23 @@ internal static class ComponentDetailsView
             .AddColumn(new TableColumn("Property").NoWrap())
             .AddColumn("Value");
 
-        AddRow(table, "Component type",
-            SolutionComponentTypes.GetDisplayName(component.ComponentType));
-        AddRow(table, "Object ID", component.ObjectId?.ToString());
-        AddRow(table, "Component row ID", component.Id.ToString());
-        AddRow(table, "Parent component", component.RootComponentId?.ToString());
-        AddRow(table, "Root behavior",
-            RootComponentBehaviors.GetDisplayName(component.RootComponentBehavior));
-        return table;
-    }
-
-    private static IRenderable CreateOverview(
-        DataverseSolutionComponent component
-    )
-    {
-        return CreateMembership(component);
-    }
-
-    private static void AddRow(Table table, string label, string? value)
-    {
-        table.AddRow(
-            new Text(label, TuiColors.SecondaryText),
-            new Text(string.IsNullOrWhiteSpace(value) ? "—" : value)
+        FormViewHelpers.AddRow(
+            table,
+            "Component type",
+            SolutionComponentTypes.GetDisplayName(component.ComponentType)
         );
+        FormViewHelpers.AddRow(table, "Object ID", component.ObjectId?.ToString());
+        FormViewHelpers.AddRow(table, "Component row ID", component.Id.ToString());
+        FormViewHelpers.AddRow(
+            table,
+            "Parent component",
+            component.RootComponentId?.ToString()
+        );
+        FormViewHelpers.AddRow(
+            table,
+            "Root behavior",
+            RootComponentBehaviors.GetDisplayName(component.RootComponentBehavior)
+        );
+        return table;
     }
 }

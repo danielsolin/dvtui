@@ -33,25 +33,45 @@ internal static class EntityDetailsView
             .AddColumn(new TableColumn("Property").NoWrap())
             .AddColumn("Value");
 
-        AddRow(table, "Display name", entity.DisplayName);
-        AddRow(table, "Logical name", entity.LogicalName);
-        AddRow(table, "Schema name", entity.SchemaName);
-        AddRow(table, "Plural name", entity.CollectionName);
-        AddRow(table, "Entity set", entity.EntitySetName);
-        AddRow(table, "Primary key", entity.PrimaryIdAttribute);
-        AddRow(table, "Primary name", entity.PrimaryNameAttribute);
-        AddRow(table, "Ownership", entity.OwnershipType);
-        AddRow(table, "Object type code", entity.ObjectTypeCode?.ToString());
-        AddRow(table, "Custom table", FormatBoolean(entity.IsCustom));
-        AddRow(table, "Customizable", FormatBoolean(entity.IsCustomizable));
-        AddRow(
+        FormViewHelpers.AddRow(table, "Display name", entity.DisplayName);
+        FormViewHelpers.AddRow(table, "Logical name", entity.LogicalName);
+        FormViewHelpers.AddRow(table, "Schema name", entity.SchemaName);
+        FormViewHelpers.AddRow(table, "Plural name", entity.CollectionName);
+        FormViewHelpers.AddRow(table, "Entity set", entity.EntitySetName);
+        FormViewHelpers.AddRow(table, "Primary key", entity.PrimaryIdAttribute);
+        FormViewHelpers.AddRow(table, "Primary name", entity.PrimaryNameAttribute);
+        FormViewHelpers.AddRow(table, "Ownership", entity.OwnershipType);
+        FormViewHelpers.AddRow(
+            table,
+            "Object type code",
+            entity.ObjectTypeCode?.ToString()
+        );
+        FormViewHelpers.AddRow(
+            table,
+            "Custom table",
+            FormViewHelpers.FormatBoolean(entity.IsCustom)
+        );
+        FormViewHelpers.AddRow(
+            table,
+            "Customizable",
+            FormViewHelpers.FormatBoolean(entity.IsCustomizable)
+        );
+        FormViewHelpers.AddRow(
             table,
             "Can create columns",
-            FormatBoolean(entity.CanCreateAttributes)
+            FormViewHelpers.FormatBoolean(entity.CanCreateAttributes)
         );
-        AddRow(table, "Managed", FormatBoolean(entity.IsManaged));
-        AddRow(table, "Activity", FormatBoolean(entity.IsActivity));
-        AddRow(table, "Description", entity.Description);
+        FormViewHelpers.AddRow(
+            table,
+            "Managed",
+            FormViewHelpers.FormatBoolean(entity.IsManaged)
+        );
+        FormViewHelpers.AddRow(
+            table,
+            "Activity",
+            FormViewHelpers.FormatBoolean(entity.IsActivity)
+        );
+        FormViewHelpers.AddRow(table, "Description", entity.Description);
         return table;
     }
 
@@ -133,21 +153,4 @@ internal static class EntityDetailsView
                );
     }
 
-    private static void AddRow(Table table, string label, string? value)
-    {
-        table.AddRow(
-            new Text(label, TuiColors.SecondaryText),
-            new Text(string.IsNullOrWhiteSpace(value) ? "—" : value)
-        );
-    }
-
-    private static string FormatBoolean(bool? value)
-    {
-        return value switch
-        {
-            true => "Yes",
-            false => "No",
-            null => "Unknown"
-        };
-    }
 }

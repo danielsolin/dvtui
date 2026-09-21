@@ -27,7 +27,6 @@ internal sealed class MsalTokenProvider
         string cachePath
     )
     {
-        EnvironmentUrl = environmentUrl;
         _cachePath = cachePath;
         _scopes = new[] { environmentUrl + "/user_impersonation" };
 
@@ -44,8 +43,6 @@ internal sealed class MsalTokenProvider
             "MSAL provider ready cache=" + cachePath
         );
     }
-
-    public string EnvironmentUrl { get; }
 
     public async Task<string> GetTokenAsync(
         CancellationToken cancellationToken

@@ -265,9 +265,10 @@ internal sealed class ColumnEditorScreen : IFormScreen
     {
         var width = AnsiConsole.Profile.Width;
         var height = AnsiConsole.Profile.Height;
-        if( width < 60 || height < 10 )
+        if( width < TuiConstants.MinimumWidth
+            || height < TuiConstants.MinimumHeight )
         {
-            return new Text("Enlarge the terminal (60 x 10). Esc: back.");
+            return new Text(TuiLayout.MinimumSizeHint("Esc: back."));
         }
 
         var table = RenderForm();

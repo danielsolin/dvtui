@@ -9,4 +9,14 @@ internal static class TuiLayout
     {
         return terminalWidth / SidebarWidthDivisor;
     }
+
+    public static string MinimumSizeHint(string action)
+    {
+        return "Enlarge the terminal ("
+            + TuiConstants.MinimumWidth
+            + " x "
+            + TuiConstants.MinimumHeight
+            + "). "
+            + action;
+    }
 }

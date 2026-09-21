@@ -267,7 +267,7 @@ internal sealed class SolutionSelectionScreen
         if( width < TuiConstants.MinimumWidth
             || height < TuiConstants.MinimumHeight )
         {
-            return new Text("Enlarge the terminal (60 x 10). Q: quit.");
+            return new Text(TuiLayout.MinimumSizeHint("Q: quit."));
         }
 
         var sidebarWidth = TuiLayout.GetSidebarWidth(width);
@@ -336,30 +336,16 @@ internal sealed class SolutionSelectionScreen
             .AddColumn(new TableColumn("Property").NoWrap())
             .AddColumn("Value");
 
-        AddRow(table, "Friendly name", solution.FriendlyName);
-        AddRow(table, "Unique name", solution.UniqueName);
-        AddRow(table, "Version", solution.Version);
-        AddRow(table, "Managed", FormatBoolean(solution.IsManaged));
-        AddRow(table, "Description", solution.Description);
-        return table;
-    }
-
-    private static void AddRow(Table table, string label, string? value)
-    {
-        table.AddRow(
-            new Text(label, TuiColors.SecondaryText),
-            new Text(string.IsNullOrWhiteSpace(value) ? "—" : value)
+        FormViewHelpers.AddRow(table, "Friendly name", solution.FriendlyName);
+        FormViewHelpers.AddRow(table, "Unique name", solution.UniqueName);
+        FormViewHelpers.AddRow(table, "Version", solution.Version);
+        FormViewHelpers.AddRow(
+            table,
+            "Managed",
+            FormViewHelpers.FormatBoolean(solution.IsManaged)
         );
-    }
-
-    private static string FormatBoolean(bool? value)
-    {
-        return value switch
-        {
-            true => "Yes",
-            false => "No",
-            null => "Unknown"
-        };
+        FormViewHelpers.AddRow(table, "Description", solution.Description);
+        return table;
     }
 
     private IRenderable RenderSolutions(int width)

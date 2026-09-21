@@ -12,9 +12,10 @@ public sealed class DataverseConnectionManager : IDisposable
     public DataverseConnectionManager(string url)
     {
         _environmentUrl = NormalizeEnvironmentUrl(url);
+        var tokenCachePath = GetTokenCachePath(_environmentUrl);
         var tokenProvider = new MsalTokenProvider(
             _environmentUrl,
-            GetTokenCachePath(_environmentUrl)
+            tokenCachePath
         );
         var options = new ConnectionOptions
         {
@@ -28,7 +29,7 @@ public sealed class DataverseConnectionManager : IDisposable
 
         SessionLog.Debug(
             "Dataverse.Client",
-            "Token cache path=" + GetTokenCachePath(_environmentUrl)
+            "Token cache path=" + tokenCachePath
         );
         _client = new ServiceClient(options, deferConnection: true);
         var executor = new LoggingDataverseExecutor(
